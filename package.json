@@ -1,0 +1,20 @@
+{
+  "name": "transmission-studio-v3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:frontend": "node frontend.mjs",
+    "dev:backend": "node server.mjs",
+    "start": "node frontend.mjs",
+    "test:integration": "node integration.mjs",
+    "test": "node --test tests.mjs letters-tests.mjs letters-workflow-tests.mjs shared-model-tests.mjs portability-tests.mjs letters-actions-tests.mjs letters-simulation-tests.mjs letter-management-tests.mjs",
+    "test:simulation": "node letters-simulation-integration.mjs",
+    "test:shared": "node shared-model-integration.mjs",
+    "test:letters-workflow": "node letters-workflow-integration.mjs",
+    "check:setup": "node scripts/check-setup.mjs",
+    "test:letters-management": "node letter-management-integration.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

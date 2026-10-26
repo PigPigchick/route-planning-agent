@@ -1,0 +1,17 @@
+.local-data/
+outputs/
+.DS_Store
+
+.env*
+!.env.example
+__pycache__/
+.venv/
+release/
+*.pyc
+
+node_modules/
+analysis/
+.openai/
+*.log
+.github-auth/
+.tools/
