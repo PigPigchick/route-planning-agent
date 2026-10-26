@@ -1,14 +1,14 @@
-输电设计工作台 完整迁移包
+路径规划智能体 / 输电设计工作台
 
-1. 完整解压 ZIP，打开其中的 transmission-studio-v3 文件夹。
+1. 克隆仓库或下载 ZIP 完整解压，进入包含 package.json 的项目根目录。
 2. 阅读“新设备安装与启动说明.md”。
 3. 安装 Node.js 22+、Python 3.10+；创建 .venv 并安装 requirements.txt。
 4. 运行 npm run check:setup 检查环境。
 5. 用两个终端分别运行 npm run dev:backend 和 npm run dev:frontend。
 6. 打开 http://127.0.0.1:5173/#letters 。
-7. 在右上角“设置 → 大模型配置”重新填写 API Key。地址、模型和参数可参考 .env.example。
-8. “使用文档与样例”中有六页 Word 使用手册、流程图、可上传的教学附件和已复核成品。
+7. 在右上角“设置 → 大模型配置”填写自己的 API Key。地址、模型和参数可参考 .env.example。
+8. 阅读 README.md、LETTERS.md 和“使用文档与样例”中的操作说明。
 
-本包包含完整前后端源码和依赖清单。新设备需要自行安装运行环境，首次安装 Python 依赖需联网。
-前后端分离运行，不使用 .command 启动文件，不依赖原电脑的路径或 Codex 应用。
-API Key、原电脑的个人输入和运行历史没有装入压缩包，新设备使用时重新配置。
+仓库包含完整前后端源码、接口文档、测试和依赖清单。首次安装 Python 依赖需联网。
+前后端分离运行，不使用 .command 启动文件，不依赖原电脑路径或 Codex 应用。
+API Key、个人输入、实际工程附件和运行历史未上传。新设备请重新配置并导入业务资料。
