@@ -12,7 +12,7 @@
 
 本仓库同时保留方案比选、合规分析、路径描述的页面入口及现有演示适配，其他负责人的正式服务需按统一接口接入。
 
-前端 http://127.0.0.1:5173，后端 http://127.0.0.1:4318，分别启动，无需 .command 文件。
+前端 [http://127.0.0.1:5173](http://127.0.0.1:5173)，后端 [http://127.0.0.1:4318](http://127.0.0.1:4318)，分别启动，无需 .command 文件。
 
 ### 2026-10-25 功能补齐
 
@@ -24,7 +24,23 @@
 
 ## 本机运行
 
-Node.js 22+，分别在两个终端执行：
+需要 Node.js 22+ 和 Python 3.10+。先在项目根目录安装 Word / Excel 导出依赖。
+
+macOS / Linux：
+
+```sh
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+```
+
+Windows PowerShell：
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+运行 `npm run check:setup` 检查环境，然后在两个终端分别执行：
 
 ```sh
 npm run dev:backend
@@ -89,7 +105,7 @@ npm run test:simulation
 
 业务仍共用三个 POST 接口：`/api/v1/context`、`/api/v1/tasks`、`/api/v1/tasks/{id}`。模型设置、连通测试、附件上传、文件下载属于配套接口。前端主文件 `dist/app.mjs`；函件 UI `dist/letters-ui.mjs`；共享模板和校验 `dist/letters-core.mjs`；后端编排 `backend/letters-agent.mjs`；模型适配 `backend/model.mjs`；导出 `backend/export_letters.py`。
 
-换设备时请先阅读 `新设备安装与启动说明.md`，创建项目 Python 虚拟环境并安装 `requirements.txt`。运行 `npm run check:setup` 可检查 Node.js、代码文件及 Word 导出依赖。
+换设备后按本页“本机运行”安装依赖并启动服务，再在右上角设置中填写自己的 API Key。
 
 ## 千问深度思考与流式返回
 
