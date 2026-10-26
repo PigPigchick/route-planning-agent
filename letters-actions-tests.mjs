@@ -332,3 +332,34 @@ test('模拟结果也可申请Excel台账，单位推荐入口在模拟视图中
   await ui.handleLetters({dataset:{op:'xlsx'}});assert.equal(requested,true);assert.equal(f.toasts.at(-1),'测试台账请求已到达');
  }finally{globalThis.fetch=original;}
 });
+
+test('重置仅在确认后恢复初始样例，备份旧输入并保留配置与历史任务，刷新不回显旧正文',async()=>{
+ const original=globalThis.fetch;let calls=0;
+ try{
+  globalThis.fetch=async()=>{calls++;throw new Error('重置不得调用接口或大模型')};
+  const f=fixture({stale:true}),before=f.storage.get(f.key),task=structuredClone(f.task),config=structuredClone(f.env.config);
+  assert.match(f.html,/data-op="reset-input"[^>]*>重置/);
+  await handleLetters({dataset:{op:'reset-input'}});
+  assert.equal(f.modal.title,'重置当前路径资料');assert.equal(f.storage.get(f.key),before);
+  await f.field('#letter-save').onclick();
+  const saved=JSON.parse(f.storage.get(f.key));
+  assert.deepEqual(saved.input,createLettersInput(f.env.context,f.env.context.routes[0]));
+  assert.deepEqual(JSON.parse(f.storage.get(saved.backupKey)).state,JSON.parse(before));
+  assert.deepEqual(f.env.tasks,[task]);assert.deepEqual(f.env.config,config);
+  assert.match(f.html,/已生成 0 份/);assert.match(f.html,/尚未生成函件/);assert.doesNotMatch(f.html,/class="letter-paper|当前函件有资料待同步/);
+  const reloaded=await import('./dist/letters-ui.mjs?reset='+crypto.randomUUID());
+  assert.doesNotMatch(reloaded.renderLetters(f.env),/class="letter-paper/);
+  const next=structuredClone(task);next.id='AFTER-RESET-'+crypto.randomUUID();f.env.tasks.unshift(next);
+  assert.match(reloaded.renderLetters(f.env),/class="letter-paper/);
+  assert.equal(calls,0);
+ }finally{globalThis.fetch=original;}
+});
+
+test('旧输入备份失败时阻止重置并保留原输入',async()=>{
+ const f=fixture({stale:true}),before=f.storage.get(f.key);
+ globalThis.localStorage.setItem=(key,value)=>{if(key.startsWith('tx-letters-reset-backup-'))throw new Error('浏览器空间不足，备份失败');f.storage.set(key,value)};
+ await handleLetters({dataset:{op:'reset-input'}});
+ await f.field('#letter-save').onclick();
+ assert.equal(f.storage.get(f.key),before);assert.match(f.field('#letter-error').textContent,/备份失败/);
+ assert.equal(f.field('#letter-save').disabled,false);
+});

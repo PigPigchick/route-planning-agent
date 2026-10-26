@@ -7,7 +7,7 @@ let followedUnit='';
 function store(value=state,storageKey=key){localStorage.setItem(storageKey,JSON.stringify(value))}
 function button(action,label,cls='',extra=''){return `<button class="${cls}" data-action="letter-ui" data-op="${action}" ${extra}>${label}</button>`}
 function field(id,label,value='',type='text'){return `<label class="field"><span>${esc(label)}</span>${type==='textarea'?`<textarea id="${id}" rows="3">${esc(value)}</textarea>`:`<input id="${id}" type="${type}" value="${esc(value)}">`}</label>`}
-function normalTask(){return env.tasks.find(t=>!t.simulation&&t.schemaVersion==='letters-v2'&&t.projectId===env.context.project.id&&t.projectVersion===env.context.project.version&&t.routeIds.includes(env.routeId))}
+function normalTask(){return env.tasks.find(t=>!state?.historyTaskIds?.includes(t.id)&&!t.simulation&&t.schemaVersion==='letters-v2'&&t.projectId===env.context.project.id&&t.projectVersion===env.context.project.version&&t.routeIds.includes(env.routeId))}
 function chosenTask(){return state?.simulationView?env.tasks.find(t=>t.id===state.simulationView)||normalTask():normalTask()}
 function selectedAgreements(){const ids=state.selected??state.input.agreements.filter(a=>a.status!=='已完成').map(a=>a.id);return state.input.agreements.filter(a=>ids.includes(a.id))}
 function listConfirmed(){return state.listConfirmation?.signature===agreementSelectionSignature(state.input,selectedAgreements().map(a=>a.id))}
@@ -81,7 +81,7 @@ export function renderLetters(e){
  if(active>=ls.length)active=0;
  const l=ls[active],selected=t?.simulation?t.simulation.agreementIds:selectedAgreements().map(a=>a.id),busy=working||updating||t?.status==='running',disabled=busy?'disabled':'',changed=inputChanged(t);
  if(t?.status==='running')watchTask(t,e);
- return `<div class="pagehead"><div><div class="eyebrow">CORRESPONDENCE AGENT / 04</div><h1>协议征询函</h1><div class="subtitle">从平台协议清单到可复核的函件与附件包</div></div><div class="actions">${e.routeSelect}${t?.simulation?button('real-view','返回真实资料','',disabled):button('input','编辑输入资料','',disabled)}${button('run-llm',busy&&t?.status==='running'?(t.simulation?'模拟流程运行中…':'正文生成中…'):t&&!t.simulation?'重新起草正文':'生成正文','primary',busy||t?.simulation?'disabled':'')}${moreActions(disabled,!!t?.simulation)}</div></div>${e.projectBar}
+ return `<div class="pagehead"><div><div class="eyebrow">CORRESPONDENCE AGENT / 04</div><h1>协议征询函</h1><div class="subtitle">从平台协议清单到可复核的函件与附件包</div></div><div class="actions">${e.routeSelect}${t?.simulation?button('real-view','返回真实资料','',disabled):button('input','编辑输入资料','',disabled)}${t?.simulation?'':button('reset-input','重置','',disabled)}${button('run-llm',busy&&t?.status==='running'?(t.simulation?'模拟流程运行中…':'正文生成中…'):t&&!t.simulation?'重新起草正文':'生成正文','primary',busy||t?.simulation?'disabled':'')}${moreActions(disabled,!!t?.simulation)}</div></div>${e.projectBar}
  ${syncNotice(t,changed,busy)}
  ${t?.simulation?`<div class="notice letter-simulation" role="status"><b>模拟测试 · ${esc(t.simulation.stage)}</b><p>在独立副本中补齐资料，默认模板适用，自动模拟确认；未经人工复核，不可正式发文。测试附件为文字占位文件。真实输入与任务保持原样。</p>${t.error?`<p class="error-msg">${esc(t.error)}</p>`:''}${t.simulation.filledFields?.length?`<details><summary>查看模型补齐的 ${t.simulation.filledFields.length} 项资料</summary><ul>${t.simulation.filledFields.map(f=>`<li>${esc(f.label)}：${esc(f.value)}</li>`).join('')}</ul></details>`:''}${t.simulation.export?'<p>成果已打包，可点击下方“下载批量 ZIP”，包内包含各单位 Word 和模拟附件。</p>':''}</div>`:''}
  ${input.project.isDemo&&!t?.simulation?'<div class="notice">当前使用演示工程。请核对工程描述、收函单位、联系人和附件；可新增实际单位，历史样例中的批复与印章不会带入。</div>':''}
@@ -143,6 +143,15 @@ export async function handleLetters(b){try{const op=b.dataset.op,i=Number(b.data
  if(op==='simulate')return await run('llm',true);
  if(t?.simulation&&!['refresh','tab','docx','zip','xlsx','download-input'].includes(op))throw new Error('请先返回真实资料；模拟结果单独保存');
  if(op==='recommend-recipients')return await recipientRecommendations(env,api,structuredClone(state.input),async additions=>{const fresh=additions.filter(a=>!state.input.agreements.some(x=>x.authorityId===a.authorityId&&x.recipientEvidence?.relationId===a.recipientEvidence?.relationId));const input={...state.input,agreements:[...state.input.agreements,...fresh]};validateLettersInput(input);state.input=input;state.selected=state.input.agreements.filter(x=>additions.some(a=>x.authorityId===a.authorityId&&x.recipientEvidence?.relationId===a.recipientEvidence?.relationId)).map(a=>a.id);active=0;await syncInput({refresh:true})});
+ if(op==='reset-input')return showForm('重置当前路径资料',`<p>清空本次填写的信息、上传附件的关联和当前正文，恢复工程与协议事项的初始样例。</p><p>大模型配置不变；历史任务保留，旧输入会自动备份到本机浏览器。</p>`,async()=>{
+  const resetAt=new Date().toISOString(),backupKey='tx-letters-reset-backup-'+crypto.randomUUID();
+  const input=createLettersInput(env.context,env.context.routes.find(r=>r.id===env.routeId));
+  const historyTaskIds=[...new Set([...(state.historyTaskIds||[]),...env.tasks.filter(task=>task.schemaVersion==='letters-v2'&&task.projectId===env.context.project.id&&task.projectVersion===env.context.project.version&&task.routeIds.includes(env.routeId)).map(task=>task.id)])];
+  const fresh={input,selected:null,historyTaskIds,resetAt,backupKey};
+  localStorage.setItem(backupKey,JSON.stringify({storageKey:key,resetAt,state}));
+  store(fresh,key);state=fresh;active=0;followedUnit='';
+  env.toast('已重置，初始样例已恢复');
+ },'确认重置');
  if(op==='sync')return await syncInput({refresh:true});
  if(op==='input')return editInput();if(op==='agreement')return await editAgreement(i);if(op==='attachments')return attachments(i);if(op==='replace-asset')return attachments(i,Number(b.dataset.asset));
  if(op==='select'){
