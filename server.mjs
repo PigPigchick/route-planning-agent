@@ -9,7 +9,7 @@ import {modelStore,loadLocalEnv,chatJSON,modelConfigSnapshot} from './backend/mo
 import {createLettersTask,generateLetters} from './backend/letters-agent.mjs';
 import {createDesignTask,generateDesign} from './backend/design-agents.mjs';
 import {resolveExportPython} from './backend/python-runtime.mjs';
-import {createLetterResources,updateLetterResources,recommendRecipients,validateRecipientReferences} from './backend/letter-resources.mjs';
+import {createLetterResources,upgradeLetterResources,updateLetterResources,recommendRecipients,validateRecipientReferences} from './backend/letter-resources.mjs';
 import {recordCorrespondence} from './backend/letter-ledger.mjs';
 import {runSimulation} from './backend/letters-simulation.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));await loadLocalEnv(root);
@@ -18,9 +18,11 @@ await fs.mkdir(stateDir,{recursive:true});await fs.mkdir(path.join(stateDir,'ass
 const model=await modelStore(stateDir),stateFile=path.join(stateDir,'records.json');let db={contexts:{},tasks:{},assets:{},files:{}};
 try{db={...db,...JSON.parse(await fs.readFile(stateFile,'utf8'))}}catch(e){if(e.code!=='ENOENT')throw e}
 db.letterResources??=createLetterResources();
+const upgradedResources=upgradeLetterResources(db.letterResources),resourcesUpgraded=upgradedResources!==db.letterResources;db.letterResources=upgradedResources;
 for(const task of Object.values(db.tasks))if(task.status==='running'&&['letters-v2','design-v2'].includes(task.schemaVersion)){task.status='failed';task.error='服务曾中断，请重新起草';task.finishedAt=new Date().toISOString();if(task.schemaVersion==='letters-v2'){for(const l of task.result.letters)if(['pending','generating','checking'].includes(l.status)){l.status='failed';l.error=task.error;l.text=task.error;l.live={...l.live,phase:'failed'};l.finishedAt=task.finishedAt}}else{task.result.text=task.error;for(const c of task.result.chapters||[])c.text=task.error;}}
 for(const task of Object.values(db.tasks))if(task.schemaVersion==='letters-v2'){for(const letter of task.result.letters)if(letter.status==='draft')letter.status=letterReadyStatus(letter);refreshSummary(task);}
 let writes=Promise.resolve();function save(){const snapshot=JSON.stringify(db);writes=writes.catch(()=>{}).then(async()=>{await fs.writeFile(stateFile+'.tmp',snapshot,{mode:0o600});await fs.rename(stateFile+'.tmp',stateFile)});return writes}
+if(resourcesUpgraded)await save();
 const allowed=new Set((process.env.TX_ALLOWED_ORIGINS||'http://127.0.0.1:5173,http://localhost:5173').split(',').filter(Boolean));
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))}
 async function body(req){let chunks=[],size=0;for await(const c of req){size+=c.length;if(size>15*1024*1024)throw new Error('请求不能超过 15MB');chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString())}catch{throw new Error('请求体须为有效 JSON')}}

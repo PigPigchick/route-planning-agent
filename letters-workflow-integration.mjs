@@ -16,7 +16,7 @@ const mock=http.createServer(async(req,res)=>{
  try{
   let raw='';for await(const chunk of req)raw+=chunk;
   const b=JSON.parse(raw);assert.equal(b.stream,true);calls++;
-  const blocks=['{{projectOverview}}','{{routeSummary}}','请就{{requestItems}}函复。',...(invalid?['净空99米。']:[])];
+  const blocks=['{{projectOverview}}','{{routeSummary}}','{{requestItems}}',...(invalid?['净空99米。']:[])];
   const text=JSON.stringify({bodyBlocks:blocks});
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   const packet=delta=>res.write('data: '+JSON.stringify({choices:[{index:0,delta}]})+'\n\n');
@@ -58,13 +58,13 @@ try{
  assert.equal(t.result.letters[0].status,'incomplete');
  // The UI's watcher must finish and refresh itself, without another generate click.
  for(let n=0;n<100&&uiTask.status==='running';n++)await new Promise(r=>setTimeout(r,25));
- assert.equal(uiTask.status,'awaiting_confirmation');assert.match(html,/资料待补充/);
+ assert.equal(uiTask.status,'awaiting_confirmation');assert.match(html,/资料待处理/);
  await handleLetters({dataset:{op:'confirm'}});assert.match(modal.body,/发函日期/);assert.match(modal.body,/无需调用大模型/);
  const originalBody=structuredClone(t.result.letters[0].bodyBlocks);
  await handleLetters({dataset:{op:'input'}});
  for(const [id,key] of [['li-issuer','issuer'],['li-contact','contactName'],['li-phone','contactPhone'],['li-address','replyAddress'],['li-overview','overview']])field('#'+id).value=input.project[key];
  field('#li-route').value=input.route.summary;field('#li-date').value='2026-10-23';field('#li-template').checked=true;
- await field('#letter-save').onclick();t=uiTask;assert.equal(calls,1);assert.equal(t.input.project.issueDate,'2026-10-23');assert.deepEqual(t.result.letters[0].bodyBlocks,originalBody);assert.match(html,/1 项待补充/);
+ await field('#letter-save').onclick();t=uiTask;assert.equal(calls,1);assert.equal(t.input.project.issueDate,'2026-10-23');assert.deepEqual(t.result.letters[0].bodyBlocks,originalBody);assert.match(html,/1 项待处理/);
  await handleLetters({dataset:{op:'attachments',index:'0'}});
  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9ZkAAAAASUVORK5CYII=','base64');
  field('#asset-file').files=[{name:'路径图.png',size:png.length,arrayBuffer:async()=>Uint8Array.from(png).buffer}];field('#asset-kind').value='路径图';
@@ -83,7 +83,7 @@ try{
  await post('/api/v1/tasks/'+t.id,{action:'export',format:'docx',letterId:'LETTER-1'},400);
  await post('/api/v1/tasks/'+t.id,{action:'confirm',letterId:'LETTER-1',expectedRevision:t.result.letters[0].revision,reviewer:'QA',note:'旧正文不能确认'},400);
  invalid=true;let failed=await post('/api/v1/tasks',{contextId:ctx.contextId,agentType:'letters',routeIds:['A'],options:{mode:'llm',lettersInput:updated}},201);
- failed=await until(failed,t=>t.status!=='running');assert.equal(failed.result.letters[0].status,'failed');assert.match(failed.result.letters[0].error,/新增数值/);assert.deepEqual(failed.result.letters[0].bodyBlocks,[]);assert.equal(calls,2);
+ failed=await until(failed,t=>t.status!=='running');assert.equal(failed.result.letters[0].status,'failed');assert.match(failed.result.letters[0].error,/新增数值/);assert.deepEqual(failed.result.letters[0].bodyBlocks,[]);assert.equal(calls,3);
  uiTask=failed;html=renderLetters(env());assert.match(html,/本次输出未采用/);assert.match(html,/新增数值/);assert.match(html,/data-op="confirm" disabled/);
  let deletion=await post('/api/v1/tasks',{contextId:ctx.contextId,agentType:'letters',routeIds:['A'],options:{mode:'template',lettersInput:updated}},201);
  const deletedLetter=structuredClone(deletion.result.letters[0]);
@@ -91,7 +91,7 @@ try{
  assert.equal(deletion.input.agreements.length,0);assert.equal(deletion.result.letters.length,0);assert.deepEqual(deletion.removedLetters[0].letter,deletedLetter);assert.notEqual(deletion.status,'confirmed');
  await post('/api/v1/tasks/'+deletion.id,{action:'export',format:'xlsx'},400);
  await post('/api/v1/tasks',{contextId:ctx.contextId,agentType:'letters',routeIds:['A'],options:{mode:'template',lettersInput:{...updated,agreements:[]}}},400);
- assert.equal(calls,2);
+ assert.equal(calls,3);
  const records=await readFile(path.join(dir,'records.json'),'utf8');assert.ok(!records.includes('PRIVATE_REASONING'));assert.ok(!records.includes('synthetic-workflow'));
  await stop();await start();t=await status(t);assert.equal(t.result.letters[0].status,'needs_rewrite');assert.match(t.result.letters[0].text,/请函复管理要求/);
  deletion=await status(deletion);assert.equal(deletion.result.letters.length,0);assert.deepEqual(deletion.removedLetters[0].letter,deletedLetter);assert.notEqual(deletion.status,'confirmed');

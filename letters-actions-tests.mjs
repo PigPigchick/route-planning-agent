@@ -363,3 +363,24 @@ test('旧输入备份失败时阻止重置并保留原输入',async()=>{
  assert.equal(f.storage.get(f.key),before);assert.match(f.field('#letter-error').textContent,/备份失败/);
  assert.equal(f.field('#letter-save').disabled,false);
 });
+
+test('跨越窗口新增删除保留其他行，确认保存逐行数据并同步一次且不调用模型',async()=>{
+ const original=globalThis.fetch;
+ try{
+  const f=fixture({count:2});let updates=0;
+  globalThis.fetch=async(url,options)=>{if(url.endsWith('/letter-resources'))return new Response(JSON.stringify((await import('./backend/letter-resources.mjs')).createLetterResources()));const b=JSON.parse(options.body);assert.equal(b.action,'update-input');updates++;const t=structuredClone(f.env.tasks[0]);updateLettersInput(t,b);return new Response(JSON.stringify(t));};
+  await handleLetters({dataset:{op:'agreement',index:'1'}});assert.match(f.field('#letter-crossing-editor').innerHTML,/第 1 处跨越/);
+  const fill=(n,start,end,length)=>{for(const [k,v] of Object.entries({facilityName:'模拟公路',spanStart:start,spanEnd:end,angleDeg:'78',spanLengthM:length,horizontalDistanceM:'47.34',clearanceM:'29',chainage:'测试里程'}))f.field('#lc-'+n+'-'+k).value=v;};
+  fill(0,'N1','N2','168');f.field('#cross-add').onclick();assert.match(f.field('#letter-crossing-editor').innerHTML,/value="N1"/);assert.match(f.field('#letter-crossing-editor').innerHTML,/第 2 处跨越/);
+  fill(1,'N2','N3','688');f.field('#cross-remove-0').onclick();assert.match(f.field('#letter-crossing-editor').innerHTML,/value="N2"/);assert.doesNotMatch(f.field('#letter-crossing-editor').innerHTML,/第 2 处跨越/);
+  fill(0,'N2','N3','688');f.field('#cross-add').onclick();fill(1,'N3','N4','800');
+  const a=f.input.agreements[1];for(const [id,value] of Object.entries({'la-unit':a.unit,'la-subject':'模拟跨越路径方案','la-type':a.type,'la-status':a.status,'la-round':a.round,'la-template':'','la-authority':'','la-areas':'','la-scope':a.scope,'la-points':a.points,'la-reply':'','la-history':'','la-change':''}))f.field('#'+id).value=value;
+  await f.field('#letter-save').onclick();assert.equal(updates,1);const saved=JSON.parse(f.storage.get(f.key)).input.agreements[1];assert.equal(saved.crossings.length,2);assert.deepEqual(saved.crossings.map(r=>r.spanLengthM),[688,800]);assert.equal(saved.crossings[0].horizontalDistanceM,47.34);assert.equal(saved.subject,'模拟跨越路径方案');
+ }finally{globalThis.fetch=original;}
+});
+
+test('资料清单下载包含具体处理方式，支持阻断任务且不调用模型或改动资料',async()=>{
+ const original=globalThis.fetch;
+ try{const f=fixture(),before=f.storage.get(f.key);let download;f.env.download=(...args)=>download=args;globalThis.fetch=async()=>{throw new Error('清单导出不应调用网络或模型')};assert.match(f.html,/下载资料清单/);assert.match(f.html,/附件待关联/);await handleLetters({dataset:{op:'materials-checklist'}});assert.match(download[0],/资料核对与补充清单.md/);assert.match(download[1],/未填写或未关联不等于甲方未提供/);assert.match(download[1],/路径图实际文件/);assert.match(download[1],/先核对已交付ZIP/);assert.equal(f.storage.get(f.key),before);
+ }finally{globalThis.fetch=original;}
+});

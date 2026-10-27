@@ -88,3 +88,6 @@
 .letter-agreements-title{white-space:nowrap;flex:0 0 auto;font-size:13px}
 .letter-agreements-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:0;flex:0 0 auto}
 .letter-agreements-tools>button{white-space:nowrap;flex:0 0 auto;padding:6px 5px;font-size:11px}
+.letter-crossing-row{margin:12px 0;padding:14px;border:1px solid #dce7df;border-radius:9px;background:#fafcfb}.letter-crossing-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.letter-crossing-row .field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.letter-crossing-row .field{min-width:0;margin:0}@media(max-width:520px){.letter-crossing-row .field-row{grid-template-columns:1fr}}
+
+.letter-material-group{margin:16px 0}.letter-material-group>b{font-size:13px}.letter-material-group li{margin:12px 0;line-height:1.7}.letter-material-group li small{display:block;color:#78867d;font-size:12px;margin-top:4px;line-height:1.7}

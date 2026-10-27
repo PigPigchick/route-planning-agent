@@ -2,8 +2,22 @@ import {LETTER_TEMPLATES} from '../dist/letters-core.mjs';
 const types=LETTER_TEMPLATES.map(t=>t.id),tokens=new Set(['projectName','projectOverview','routeSummary','requestItems','specialFacts','historySummary']);
 const text=(v,label,max=6000)=>{if(typeof v!=='string'||!v.trim()||v.length>max)throw new Error(label+'不能为空或过长');return v.trim()};
 const list=(v,label,max=100)=>{if(!Array.isArray(v)||v.length>max||v.some(x=>typeof x!=='string'||!x.trim()||x.length>300))throw new Error(label+'须为有效文字数组');return [...new Set(v.map(x=>x.trim()))]};
-export const DEFAULT_BODY=['{{projectOverview}}','{{routeSummary}}','{{specialFacts}}','{{historySummary}}','现就{{requestItems}}征询贵单位意见，请予指导并函复。','专此函达，请予支持。'];
+export const DEFAULT_BODY=['{{projectOverview}}','{{routeSummary}}','{{specialFacts}}','{{historySummary}}','{{requestItems}}','专此函达，请予支持。'];
 export function createLetterResources(){return {revision:1,templates:LETTER_TEMPLATES.map(t=>({...structuredClone(t),type:t.id,enabled:true,bodyBlocks:[...DEFAULT_BODY],history:[]})),authorities:[],relations:[],areas:[],audit:[]};}
+export function upgradeLetterResources(current){
+ const next=structuredClone(current),at=new Date().toISOString();let changed=false;
+ for(const base of LETTER_TEMPLATES){
+  const old=next.templates.find(t=>t.id===base.id);
+  if(!old){next.templates.push({...structuredClone(base),type:base.id,enabled:true,bodyBlocks:[...DEFAULT_BODY],history:[]});changed=true;continue;}
+  const legacy=[...DEFAULT_BODY];legacy[4]='现就{{requestItems}}征询贵单位意见，请予指导并函复。';
+  if(JSON.stringify(old.bodyBlocks)===JSON.stringify(legacy)){
+   old.history??=[];old.history.push({...structuredClone(old),history:undefined});
+   old.bodyBlocks=[...DEFAULT_BODY];old.sequence=(old.sequence||1)+1;old.version=old.sequence+'.0';old.updatedAt=at;old.updatedBy='系统模板规则升级';changed=true;
+  }
+ }
+ if(changed){next.revision++;next.audit??=[];next.audit.push({at,actor:'系统模板规则升级',action:'upgrade-builtins',revision:next.revision});}
+ return changed?next:current;
+}
 function templateValue(b,previous){
  const type=b.type||previous?.type;if(!types.includes(type))throw new Error('模板所属协议类型无效');
  if(previous&&type!==previous.type)throw new Error('已有模板不能更换协议类型，请新增模板');
@@ -16,6 +30,7 @@ function templateValue(b,previous){
  const all=body.join('\n');for(const k of ['projectOverview','routeSummary','requestItems'])if(!all.includes('{{'+k+'}}'))throw new Error('模板缺少必要占位符：'+k);
  const stripped=all.replace(/\{\{(\w+)\}\}/g,(_,k)=>{if(!tokens.has(k))throw new Error('模板占位符无效：'+k);return ''});
  if(/[<>]|\d|已获.{0,5}同意|已.{0,3}批复|已批准|符合.{0,6}(要求|规范)/.test(stripped))throw new Error('模板连接文字不能硬编码数值、HTML或审批结论，请使用事实占位符');
+ for(const block of body)for(const key of ['projectOverview','routeSummary','requestItems','specialFacts','historySummary'])if(block.includes('{{'+key+'}}')&&block.trim()!=='{{'+key+'}}')throw new Error(key+'须独立成段，衔接文字请另起一段');
  return {id:previous?.id||'TPL-'+crypto.randomUUID(),type,name:text(b.name,'模板名称',120),source:text(b.source,'模板来源',1000),purpose:text(b.purpose??previous?.purpose??base.purpose,'适用说明',1000),version:String((previous?.sequence||0)+1)+'.0',sequence:(previous?.sequence||0)+1,enabled:previous?.enabled??true,unitIds:list(b.unitIds??previous?.unitIds??[],'适用单位编号'),required,attachments,bodyBlocks:body};
 }
 export function updateLetterResources(current,b){
@@ -34,7 +49,7 @@ export function updateLetterResources(current,b){
   const seen=new Set();next.areas=b.areas.map(a=>{const code=text(a.code,'区划代码',100);if(seen.has(code))throw new Error('区划代码重复');seen.add(code);return {code,name:text(a.name,'区划名称',200),source:text(a.source,'区划来源',1000)}});
   const ids=new Set();next.authorities=b.authorities.map(a=>{
    const id=text(a.id,'单位编号',100);if(ids.has(id))throw new Error('单位编号重复');ids.add(id);
-   const areaCodes=list(a.areaCodes||[],'单位区划代码'),featureIds=list(a.featureIds||[],'对象编号'),ts=list(a.types,'适用协议类型',5),relationTypes=list(a.relationTypes,'适用空间关系');
+   const areaCodes=list(a.areaCodes||[],'单位区划代码'),featureIds=list(a.featureIds||[],'对象编号'),ts=list(a.types,'适用协议类型',types.length),relationTypes=list(a.relationTypes,'适用空间关系');
    if(!ts.length||ts.some(t=>!types.includes(t))||!relationTypes.length||(!areaCodes.length&&!featureIds.length))throw new Error('单位目录必须指定有效协议类型、空间关系和适用区划或对象');
    if(areaCodes.some(c=>!seen.has(c)))throw new Error('单位引用了未登记的区划代码');
    for(const k of ['validFrom','validTo'])if(a[k]&&(!/^\d{4}-\d{2}-\d{2}$/.test(a[k])||!Number.isFinite(Date.parse(a[k]))||new Date(a[k]).toISOString().slice(0,10)!==a[k]))throw new Error('有效期须为YYYY-MM-DD');

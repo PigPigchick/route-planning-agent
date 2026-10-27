@@ -12,7 +12,7 @@ const mock=http.createServer(async(req,res)=>{
  try{let raw='';for await(const c of req)raw+=c;const b=JSON.parse(raw),p=JSON.parse(b.messages[1].content);calls++;
   let output;
   if(p.purpose){output={values:Object.fromEntries(p.fields.map(f=>[f.key,f.type==='number'?12:f.field==='project.issueDate'?'2026-10-23':'模拟测试值'])),attachmentNotes:Object.fromEntries(p.agreements.map(a=>[a.id,'模拟区段及参数，仅用于软件测试。']))};if(invalid)output.values={};}
-  else output={bodyBlocks:p.allowedPlaceholders.map(k=>'本次征询资料：'+k+'。')};
+  else output={bodyBlocks:p.allowedPlaceholders.filter(k=>k!=='{{projectName}}')};
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   res.write('data: '+JSON.stringify({choices:[{index:0,delta:{reasoning_content:'PRIVATE_SIMULATION_REASONING'}}]})+'\n\n');
   const text=JSON.stringify(output);
@@ -33,8 +33,8 @@ try{
  const real=await post('/api/v1/tasks',{...base,options:{mode:'template',lettersInput:input}},201);
  let t=await post('/api/v1/tasks',{...base,options:{simulation:true,lettersInput:input}},201);
  assert.equal(t.status,'running');assert.ok(t.simulation);const done=await wait(t);t=done.task;
- assert.equal(t.status,'simulation_completed',JSON.stringify(t));assert.equal(calls,6);assert.ok(done.stages.has('补全资料'));assert.ok(done.stages.has('起草正文'));
- assert.equal(t.result.summary.simulated,5);assert.equal(t.result.summary.confirmed,0);assert.equal(t.simulation.confirmations.length,5);
+ assert.equal(t.status,'simulation_completed',JSON.stringify(t));assert.equal(calls,LETTER_TEMPLATES.length+1);assert.ok(done.stages.has('补全资料'));assert.ok(done.stages.has('起草正文'));
+ assert.equal(t.result.summary.simulated,LETTER_TEMPLATES.length);assert.equal(t.result.summary.confirmed,0);assert.equal(t.simulation.confirmations.length,LETTER_TEMPLATES.length);
  for(const l of t.result.letters){assert.equal(l.status,'simulated');assert.deepEqual(l.missingFields,[]);assert.deepEqual(l.confirmations,[]);assert.ok(l.attachments.every(a=>a.available&&a.name.startsWith('模拟测试_')));assert.match(l.text,/模拟测试/);}
  assert.deepEqual(input,source);assert.deepEqual(await post('/api/v1/tasks/'+real.id,{action:'status'}),real);
  await post('/api/v1/tasks/'+t.id,{action:'confirm',letterId:'LETTER-1',expectedRevision:1,reviewer:'QA',note:'不能当人工确认'},400);
@@ -55,5 +55,5 @@ try{
  failed=(await wait(await post('/api/v1/tasks',{...base,options:{simulation:true,lettersInput:{...input,agreements:input.agreements.slice(0,1)}}},201))).task;
  assert.equal(failed.status,'failed');assert.equal(failed.simulation.failedStage,'导出成果');assert.equal(failed.simulation.export,undefined);
  const records=await readFile(path.join(dir,'records.json'),'utf8');assert.ok(!records.includes('PRIVATE_SIMULATION_REASONING'));assert.ok(!records.includes('synthetic-simulation-key'));
- console.log('模拟流程联调通过：五类模板补齐、流式起草、零缺项、独立自动模拟确认、Word/ZIP下载、原任务不变、失败不假成功、导出失败、重启持久化。');
+ console.log('模拟流程联调通过：全部模板补齐、流式起草、零缺项、独立自动模拟确认、Word/ZIP下载、原任务不变、失败不假成功、导出失败、重启持久化。');
 }finally{await stop();await new Promise(r=>mock.close(r));await rm(dir,{recursive:true,force:true});}

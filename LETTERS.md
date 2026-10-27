@@ -11,7 +11,7 @@
 | 路径 | route.id/version/summary | 选中路径与 GIS 已确认的语义描述 |
 | 协议事项 | agreements[].id/unit/type/scope/points/status | 平台协议清单；区域、部门、完成情况 |
 | 历史回函 | replySummary/previousLetter/changeSummary | 平台台账或人工录入 |
-| 专项资料 | facts | 平台已计算、已确认的技术参数 |
+| 专项资料 | facts / crossings | 平台已计算、已确认的技术参数 |
 | 实际附件 | attachments[].name/kind/assetId/routeVersion | 上传接口或后续对接工程文件服务 |
 | 模板适用性 | templateConfirmed | 人工核对 |
 
@@ -24,6 +24,12 @@
 | highway | facilityName、spanStart、spanEnd、angleDeg、spanLengthM、horizontalDistanceM、clearanceM、chainage | 航带图、平断面图 |
 | mineral | leftBufferM、rightBufferM、coordinateSystem | 路径图、坐标表 |
 | aviation | facilityName、coordinateSystem、elevationDatum | 路径图、杆塔坐标高程表 |
+| grounding | 本次事项明确接地极址及接地极线路范围 | 路径图 |
+| railway | facilityName（铁路设施名称） | 路径图、坐标表 |
+| seismic | 本次地震监测协调事项 | 路径图、坐标表 |
+| military | 本次军事设施协调事项 | 路径图、坐标表 |
+
+公路及河道多档跨越使用 `crossings` 数组，每行使用相应类型的上述字段；1–50行，以行数据为准，只继承通用设施名称和坐标基准。省略时保留 `facts` 单档兼容。可选 `subject` 用于不含工程名的征询主题。完整示例见 `使用文档与样例/规则优化与多档跨越说明_2026-10-27.md`。
 
 M 后缀单位为米，angleDeg 为度；以 JSON number 传入，零值不会当成缺失。程序不推算这些数值。坐标表和图纸本期作为实际附件接收，不自动从文件提取表格或空间事实。
 

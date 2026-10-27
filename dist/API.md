@@ -145,3 +145,8 @@ POST /api/v1/tasks 的 options.mode 对四类智能体均支持 llm/template；�
 `POST /api/v1/tasks/{id}` 新增 `action=record-correspondence`，独立登记发出、回复、闭环及变更历史；`action=export` 的 format 新增 xlsx，真实Excel台账也会加入新导出的ZIP。业务登记不调用模型、不发送函件，不把已复核当作已发出。
 
 本机正式单位目录和空间关系需要业务方导入；原始GIS解析、权属认定、组织权限、甲方私有化模型和平台自动回写不由这些接口自动完成。
+
+
+## 多档跨越与专项类型（2026-10-27）
+
+协议类型新增 `grounding / railway / seismic / military`。可选 `subject` 为不含工程名称的征询主题（单行，最多180字）。`highway / water` 可传 `crossings` 数组（1–50行），逐行校验并生成技术表；省略时兼容原 `facts` 单档。字段、界面操作及 JSON 样例见 `使用文档与样例/规则优化与多档跨越说明_2026-10-27.md`。原任务、配置、复核和导出接口不变。

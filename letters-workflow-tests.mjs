@@ -97,7 +97,7 @@ test('完整模型输出检查成功后才进入待复核；失败保留具体�
  try{
   for(const invalid of [false,true]){
    const {input,assets}=fixture();const t=createLettersTask(SAMPLE,{contextId:'test',routeIds:['A'],options:{mode:'llm',lettersInput:input}},assets);
-   const bodyBlocks=['{{projectOverview}}','{{routeSummary}}','请就{{requestItems}}函复。',...(invalid?['净空99米。']:[])];
+   const bodyBlocks=['{{projectOverview}}','{{routeSummary}}','{{requestItems}}',...(invalid?['净空99米。']:[])];
    globalThis.fetch=async()=>new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({bodyBlocks})}}]}));
    const stages=[];await generateLetters(t,{model:'test',apiKey:'synthetic',baseUrl:'http://mock'},async()=>{stages.push(t.result.letters[0].status)});
    assert.ok(stages.includes('generating'));assert.ok(stages.includes('checking'));

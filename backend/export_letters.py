@@ -14,30 +14,50 @@ def make_doc(letter,target):
  for node in list(d.styles.element.iter(qn('w:pBdr'))):node.getparent().remove(node)
  for name in ['Heading 1','Heading 2']:
   d.styles[name].font.color.rgb=RGBColor(0,0,0)
- style=d.styles['Normal'];style.font.name='Songti SC';style.font.size=Pt(12);style.element.rPr.rFonts.set(qn('w:eastAsia'),'Songti SC');style.paragraph_format.line_spacing=1.5
+ style=d.styles['Normal'];style.font.name='Songti SC';style.font.size=Pt(12);style.element.rPr.rFonts.set(qn('w:eastAsia'),'Songti SC');style.paragraph_format.line_spacing=1.25;style.paragraph_format.space_after=Pt(4)
  if letter.get('simulation'):
   p=d.add_paragraph('模拟测试成果 · 非真实工程资料 · 未经人工复核');p.runs[0].bold=True
   d.add_paragraph('本函仅验证软件流程。参数和文字附件为测试数据，模板适用性按测试假设处理，不可正式发文。')
  elif letter['status']!='confirmed':
   p=d.add_paragraph('草稿 · 待人工复核');p.runs[0].bold=True
  title=letter['title'];name=letter['issuer']['name']
- title=title.replace(name,name+'\n',1) if len(title)>28 else title
- p=d.add_paragraph(style='Title');p.alignment=1;p.paragraph_format.line_spacing=1.25;p.paragraph_format.space_after=Pt(18);r=p.add_run(title);r.bold=True;r.font.size=Pt(17);r.font.color.rgb=RGBColor(0,0,0);r.font.name='Songti SC';r._element.rPr.rFonts.set(qn('w:eastAsia'),'Songti SC')
+ p=d.add_paragraph(style='Title');p.alignment=1;p.paragraph_format.line_spacing=1.2;p.paragraph_format.space_before=Pt(0);p.paragraph_format.space_after=Pt(14);r=p.add_run(title);r.bold=True;r.font.size=Pt(17);r.font.color.rgb=RGBColor(0,0,0);r.font.name='Songti SC';r._element.rPr.rFonts.set(qn('w:eastAsia'),'Songti SC')
  if letter['issuer'].get('documentNumber'):d.add_paragraph(letter['issuer']['documentNumber'])
  d.add_paragraph(letter['unit']+'：')
  for text in letter['bodyBlocks']:
   p=d.add_paragraph(text);p.paragraph_format.first_line_indent=Cm(.85)
  for t in letter['tables']:
-  d.add_paragraph(t['title']);table=d.add_table(rows=1,cols=len(t['headers']));table.style='Table Grid'
+  caption=d.add_paragraph(t['title']);caption.paragraph_format.keep_with_next=True
+  table=d.add_table(rows=1,cols=len(t['headers']));table.style='Table Grid'
+  repeat=OxmlElement('w:tblHeader');table.rows[0]._tr.get_or_add_trPr().append(repeat)
   for c,text in zip(table.rows[0].cells,t['headers']):c.text=str(text)
   for row in t['rows']:
    for c,text in zip(table.add_row().cells,row):c.text=str(text)
+  if len(t['headers'])==8:
+   table.autofit=False
+   widths=[.7,2.1,2.2,1.25,1.5,2.1,2.3,2.85]
+   for col,width in zip(table.columns,widths):col.width=Cm(width*16/15)
+   for row in table.rows:
+    for cell,width in zip(row.cells,widths):cell.width=Cm(width*16/15)
+  for row in table.rows:
+   for cell in row.cells:
+    for paragraph in cell.paragraphs:
+     paragraph.paragraph_format.line_spacing=1.1;paragraph.paragraph_format.space_after=Pt(2)
+     for run in paragraph.runs:run.font.size=Pt(10)
+   no_split=OxmlElement('w:cantSplit');row._tr.get_or_add_trPr().append(no_split)
+ attachment_start=len(d.paragraphs)
  d.add_paragraph('附件：')
- for a in letter['attachments']:d.add_paragraph(f"{a['number']}. {a['name']}"+('' if a['available'] else '（实际文件待补充）'))
+ for a in letter['attachments']:d.add_paragraph(f"{a['number']}. {a['name']}"+('' if a['available'] else '（文件待关联/核对）'))
+ if letter['attachments']:
+  d.paragraphs[attachment_start].paragraph_format.keep_with_next=True
+  if len(letter['attachments'])<=5:
+   for paragraph in d.paragraphs[attachment_start:-1]:paragraph.paragraph_format.keep_with_next=True
+ signature_start=len(d.paragraphs)
  for text in [letter['issuer'].get('issuer') or '发函单位待填写',letter['issuer'].get('issueDate') or '日期待填写']:
   p=d.add_paragraph(text);p.alignment=2
  d.add_paragraph('联系人：'+(letter['issuer'].get('contactName') or '待填写')+'    电话：'+(letter['issuer'].get('contactPhone') or '待填写'))
  d.add_paragraph('复函地址：'+(letter['issuer'].get('replyAddress') or '待填写'))
+ for paragraph in d.paragraphs[signature_start:-1]:paragraph.paragraph_format.keep_with_next=True
  if letter['status'] not in ['confirmed','simulated']:
   d.add_paragraph('待补资料与复核事项',style='Heading 2')
   for item in letter['missingFields']:d.add_paragraph(item['label'],style='List Bullet')
@@ -58,7 +78,7 @@ else:
    for j,a in enumerate(l['attachments'],1):
     asset=data['assets'].get(a.get('assetId'))
     if a['available'] and asset and pathlib.Path(asset['path']).is_file():z.write(asset['path'],folder+'/附件/'+str(j)+'_'+safe(asset['name']))
-    else:manifest.append(folder+'：'+a['name']+'（实际文件未提供）')
+    else:manifest.append(folder+'：'+a['name']+'（未找到已关联原件，请核对文件与关联关系）')
   z.writestr('协议征询台账.xlsx',workbook_bytes(letters))
   z.writestr('发出与反馈变更记录.json',json.dumps([{'letterId':l['id'],'unit':l['unit'],'record':l.get('correspondence'),'history':l.get('correspondenceHistory',[])} for l in letters],ensure_ascii=False,indent=2))
   if data.get('simulation'):z.writestr('模拟流程记录.json',json.dumps(data['simulation'],ensure_ascii=False,indent=2))

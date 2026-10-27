@@ -11,7 +11,7 @@ export function simulationFields(input,ids,templateCatalog){
   if(m.field.startsWith('attachments.')||['templateConfirmed','route.version'].includes(m.field))continue;
   const common=/^(project|route)\./.test(m.field),a=input.agreements.find(a=>l.agreementIds.includes(a.id));
   const key=common?m.field:'agreements.'+a.id+'.'+m.field;
-  if(!fields.has(key))fields.set(key,{key,label:m.label,agreementId:common?null:a.id,field:m.field,type:numeric.has(m.field.replace('facts.',''))?'number':'string'});
+  if(!fields.has(key))fields.set(key,{key,label:m.label,agreementId:common?null:a.id,field:m.field,type:numeric.has(m.field.split('.').at(-1))?'number':'string'});
  }
  return [...fields.values()];
 }
@@ -27,7 +27,7 @@ export function applySimulationValues(input,ids,fields,output){
   if(f.type==='number'?(typeof v!=='number'||!Number.isFinite(v)||v<0):(typeof v!=='string'||!v.trim()||v.length>5000))throw new Error('模拟补全缺失或格式错误：'+f.label);
   if(f.field==='project.issueDate'&&(!/^\d{4}-\d{2}-\d{2}$/.test(v)||!Number.isFinite(Date.parse(v))||new Date(v).toISOString().slice(0,10)!==v))throw new Error('模拟发函日期无效');
   const target=f.agreementId?copy.agreements.find(a=>a.id===f.agreementId):copy;
-  const parts=f.field.split('.');if(parts.length===1)target[parts[0]]=v;else{target[parts[0]]??={};target[parts[0]][parts[1]]=v;}
+  const parts=f.field.split('.');if(parts.some(k=>['__proto__','constructor','prototype'].includes(k)))throw new Error('模拟补全字段路径无效');let parent=target;for(const key of parts.slice(0,-1)){if(!parent||typeof parent!=='object'||!Object.hasOwn(parent,key))throw new Error('模拟补全字段路径不存在');parent=parent[key];}parent[parts.at(-1)]=v;
  }
  for(const id of ids){const note=output.attachmentNotes[id];if(typeof note!=='string'||!note.trim()||note.length>10000)throw new Error('模型未提供模拟附件内容：'+id);}
  copy.route.version=copy.project.version;
