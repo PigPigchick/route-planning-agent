@@ -1,0 +1,65 @@
+{
+  "mode": "llm",
+  "model": "qwen3.8-max",
+  "trace": [
+    {
+      "action": "首次生成",
+      "status": "incomplete",
+      "missing": [
+        "发函日期",
+        "路径图实际文件",
+        "林地区段与征询事项清单_教学样例.docx实际文件"
+      ],
+      "letterRevision": 1,
+      "taskRevision": 1,
+      "at": "2026-10-22T17:56:20.292Z"
+    },
+    {
+      "action": "补充发函日期",
+      "status": "incomplete",
+      "missing": [
+        "路径图实际文件",
+        "林地区段与征询事项清单_教学样例.docx实际文件"
+      ],
+      "letterRevision": 2,
+      "taskRevision": 2,
+      "at": "2026-10-22T17:56:20.302Z"
+    },
+    {
+      "action": "上传路径图附件",
+      "status": "incomplete",
+      "missing": [
+        "林地区段与征询事项清单_教学样例.docx实际文件"
+      ],
+      "letterRevision": 3,
+      "taskRevision": 3,
+      "at": "2026-10-22T17:56:20.315Z"
+    },
+    {
+      "action": "上传其他附件",
+      "status": "draft",
+      "missing": [],
+      "letterRevision": 4,
+      "taskRevision": 4,
+      "at": "2026-10-22T17:56:20.325Z"
+    },
+    {
+      "action": "人工编辑正文",
+      "status": "draft",
+      "missing": [],
+      "letterRevision": 5,
+      "taskRevision": 5,
+      "at": "2026-10-22T17:56:20.329Z"
+    },
+    {
+      "action": "提交人工复核",
+      "status": "confirmed",
+      "missing": [],
+      "letterRevision": 6,
+      "taskRevision": 6,
+      "at": "2026-10-22T17:56:20.333Z"
+    }
+  ],
+  "finalStatus": "confirmed",
+  "verifiedAt": "2026-10-22T17:56:20.674Z"
+}

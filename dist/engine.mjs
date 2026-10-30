@@ -22,6 +22,11 @@ export const SAMPLE = {
 };
 export function clone(v){return JSON.parse(JSON.stringify(v));}
 export function validateContext(c){
+ if(c?.contextType==='letters'){
+  if(!c.project?.id||!c.project?.name||!c.project?.version||!Array.isArray(c.routes)||!c.routes.length||c.routes.some(r=>!r.id||!r.name)||new Set(c.routes.map(r=>r.id)).size!==c.routes.length)throw new Error('征询函工程缺少工程编号、名称、版本或路径');
+  if(!Array.isArray(c.agreements)||c.agreements.length>500||c.agreements.some(a=>!a||!a.id||a.unit!==undefined&&typeof a.unit!=='string')||!Array.isArray(c.issues)||!Array.isArray(c.rules))throw new Error('征询函协议清单无效');
+  return c;
+ }
  const errors=[];
  if(!c?.project?.id||!c?.project?.name)errors.push('缺少工程编号或名称');
  if(!Array.isArray(c?.routes)||!c.routes.length||c.routes.length>20)errors.push('路径应为 1–20 条');
@@ -41,6 +46,7 @@ export function rankRoutes(routes,weights={economy:50,ecology:30,construction:20
 }
 export function describe(c,r){return `${c.project.name}（${r.name}）起于${c.project.start||'起点待补充'}，止于${c.project.end||'终点待补充'}，依次经过${r.via.join('、')}。线路全长 ${r.length.toFixed(1)} km，拟设杆塔 ${r.towers} 基；沿线地形构成为${r.terrain}。涉及林地区段 ${r.forest.toFixed(1)} km，房屋拆迁面积约 ${r.demolition.toLocaleString()} m²，主要跨越点 ${r.crossings} 处。空间叠加资料提示生态敏感点 ${r.sensitive} 处、红线交叉 ${r.redline} 处，相关边界和跨越条件须经设计人员复核。本段依据工程快照 ${c.project.version} 生成，数值直接引用工程对象与确定性计算结果。`;}
 export function makeTask(c,agentType,routeIds,weights){
+ if(c?.contextType==='letters'&&agentType!=='letters')throw new Error('当前工程仅包含征询函资料，请先补充路径与空间参数');
  validateContext(c); if(!AGENTS[agentType])throw new Error('未知智能体类型');
  if(!Array.isArray(routeIds)||!routeIds.length||routeIds.some(id=>!c.routes.some(r=>r.id===id)))throw new Error('请选择有效路径');
  const routes=c.routes.filter(r=>routeIds.includes(r.id)),r=routes[0];

@@ -1,0 +1,12 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawnSync} from 'node:child_process';
+import {loadLocalEnv} from '../backend/model.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');await loadLocalEnv(root);
+if(!process.env.TX_DATABASE_URL)throw new Error('尚未配置数据库');
+const url=new URL(process.env.TX_DATABASE_URL),bin=process.env.TX_PG_BIN||'/Applications/Postgres.app/Contents/Versions/18/bin';
+const dir=path.join(root,'outputs','数据库备份');await fs.mkdir(dir,{recursive:true});
+const output=path.join(dir,'transmission_studio_'+new Date().toISOString().replace(/[:.]/g,'-')+'.dump');
+const result=spawnSync(path.join(bin,'pg_dump'),['--format=custom','--file',output],{env:{...process.env,PGHOST:url.hostname,PGPORT:url.port||'5432',PGUSER:decodeURIComponent(url.username),PGPASSWORD:decodeURIComponent(url.password),PGDATABASE:url.pathname.slice(1)},encoding:'utf8'});
+if(result.status!==0)throw new Error(result.stderr||'数据库备份失败');await fs.chmod(output,0o600);console.log('数据库备份完成：'+output);

@@ -25,10 +25,10 @@
 返回 201（已存在的同一快照返回 200）：
 
 ```json
-{"contextId":"CTX-实际返回值","projectId":"PRJ-2026-018","version":"v1.0","mode":"demo"}
+{"contextId":"CTX-实际返回值","contextRevision":1}
 ```
 
-同一 project.id + project.version 不可覆盖不同内容；变化须使用新版本，否则 409。
+每个 contextId 对应不可变的运行快照。征询函页面提交 contextType: letters：同一工程编号与业务版本的资料发生修改时，服务新建 contextId 并递增 contextRevision；内容相同则复用对应记录，历史记录与任务不被覆盖。完整 GIS 工程的空间参数或规则变化仍须使用新 project.version，否则返回 400。
 
 ## 02 智能体任务
 
@@ -150,3 +150,27 @@ POST /api/v1/tasks 的 options.mode 对四类智能体均支持 llm/template；�
 ## 多档跨越与专项类型（2026-10-27）
 
 协议类型新增 `grounding / railway / seismic / military`。可选 `subject` 为不含工程名称的征询主题（单行，最多180字）。`highway / water` 可传 `crossings` 数组（1–50行），逐行校验并生成技术表；省略时兼容原 `facts` 单档。字段、界面操作及 JSON 样例见 `使用文档与样例/规则优化与多档跨越说明_2026-10-27.md`。原任务、配置、复核和导出接口不变。
+
+## Excel工程与协议清单输入（2026-10-28）
+
+`POST /api/v1/letter-input/parse` 接收 `{name:"资料.xlsx",base64:"文件内容"}`，返回 `{sheets:[{name,rows:[[单元格值]]}]}`。仅支持.xlsx，最大6MB；拒绝公式、错误值和超限内容。解析不保存工程、不创建任务、不调用模型。前端据“工程信息”“协议清单”“附件清单”映射字段、展示缺项，用户确认后写入工作副本。
+
+函件输入最多500条，每次通过`agreementIds`起草最多30条。`contextType:"letters"`可注册仅含工程、路径描述和协议清单的上下文，不用虚构GIS数值；该上下文仅能运行letters，其他智能体需完整参数。真实附件仍通过`/api/v1/assets`上传并绑定assetId；Excel中的文件名仅登记附件需求。字段说明见`使用文档与样例/Excel工程与协议清单导入说明_2026-10-28.md`。
+
+### 资料核对清单 Word 导出
+
+向 `POST /api/v1/tasks/{taskId}` 提交 `{"action":"export","format":"materials-docx","stale":false}`，返回文件编号、`.docx` 文件名和下载地址。清单按收函单位汇总该任务记录中的待补信息、附件关联及核对事项，包含具体情况和处理方式。`stale` 为 true 时注明当前输入尚未同步。此导出允许任务生成中、资料不全或生成失败，不调用模型，不修改任务、输入或复核状态。
+
+
+## PostgreSQL 工程存储与 RAG
+
+配置 `TX_DATABASE_URL` 后使用PostgreSQL＋pgvector；连接失败时明确停止启动，不自动回退JSON。旧records.json首次迁移前备份，实际附件及导出文件继续保存在本机目录。独立测试指定TX_DATA_DIR时默认使用JSON；需要测试数据库时同时指定TX_USE_DATABASE=true和临时数据库连接。
+
+- GET `/api/v1/storage`：数据库连接及pgvector版本，不返回连接密码。
+- GET `/api/v1/projects`：工程目录、工作副本及修订号。
+- POST `/api/v1/projects`：保存entry、workingCopies、deleted及expectedRevision。旧修订号返回409；action=reset隐藏当前工程并保留历史任务。
+- GET `/api/v1/tasks`：加载历史任务，可用projectId、version筛选。
+- GET `/api/v1/knowledge`：资料列表及向量检索配置，不返回API Key。
+- POST `/api/v1/knowledge`：action为configure/test/ingest/sync-templates/search/set-enabled。入库支持text或name/base64文件；向量接口沿用共享模型服务。资料包含kind、type、projectId及projectVersion，用于过滤适用范围。
+
+RAG仅在显式模型起草时检索。letter.retrieval保存实际使用的片段、标题及分数；原事实占位符、数值及审批断言检查继续生效。模板修改或停用后旧模板索引停用，手动同步有效模板建立新版本索引。

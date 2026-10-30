@@ -1,2 +1,4 @@
-# Word, Excel ledger and ZIP export; Excel uses the Python standard library. Node.js code uses built-in modules only.
+# Word, Excel ledger and ZIP export; Excel uses the Python standard library. Node.js dependencies are listed in package.json.
 python-docx==1.2.0
+
+pypdf>=5.0,<7

@@ -12,17 +12,27 @@ import {resolveExportPython} from './backend/python-runtime.mjs';
 import {createLetterResources,upgradeLetterResources,updateLetterResources,recommendRecipients,validateRecipientReferences} from './backend/letter-resources.mjs';
 import {recordCorrespondence} from './backend/letter-ledger.mjs';
 import {runSimulation} from './backend/letters-simulation.mjs';
+import {readLetterWorkbook} from './backend/letter-xlsx.mjs';
+import {materialsChecklistData} from './dist/letter-materials.mjs';
+import {registerContext} from './backend/context-store.mjs';
+import {openRepository,databaseStatus} from './backend/database.mjs';
+import {projectStore} from './backend/project-store.mjs';
+import {knowledgeStore} from './backend/knowledge.mjs';
+import {ensureLocalPostgres} from './backend/local-postgres.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));await loadLocalEnv(root);
+await ensureLocalPostgres(root);
 const stateDir=process.env.TX_DATA_DIR||path.join(root,'.local-data'),port=Number(process.env.PORT||4318);
 await fs.mkdir(stateDir,{recursive:true});await fs.mkdir(path.join(stateDir,'assets'),{recursive:true});await fs.mkdir(path.join(stateDir,'exports'),{recursive:true});
-const model=await modelStore(stateDir),stateFile=path.join(stateDir,'records.json');let db={contexts:{},tasks:{},assets:{},files:{}};
-try{db={...db,...JSON.parse(await fs.readFile(stateFile,'utf8'))}}catch(e){if(e.code!=='ENOENT')throw e}
+const model=await modelStore(stateDir);
+const repository=await openRepository(stateDir,process.env.TX_DATA_DIR&&process.env.TX_USE_DATABASE!=='true'?'':process.env.TX_DATABASE_URL);
+let db={contexts:{},tasks:{},assets:{},files:{},...repository.initial};
+const projects=await projectStore(repository),knowledge=await knowledgeStore(repository,model);
 db.letterResources??=createLetterResources();
 const upgradedResources=upgradeLetterResources(db.letterResources),resourcesUpgraded=upgradedResources!==db.letterResources;db.letterResources=upgradedResources;
 for(const task of Object.values(db.tasks))if(task.status==='running'&&['letters-v2','design-v2'].includes(task.schemaVersion)){task.status='failed';task.error='服务曾中断，请重新起草';task.finishedAt=new Date().toISOString();if(task.schemaVersion==='letters-v2'){for(const l of task.result.letters)if(['pending','generating','checking'].includes(l.status)){l.status='failed';l.error=task.error;l.text=task.error;l.live={...l.live,phase:'failed'};l.finishedAt=task.finishedAt}}else{task.result.text=task.error;for(const c of task.result.chapters||[])c.text=task.error;}}
 for(const task of Object.values(db.tasks))if(task.schemaVersion==='letters-v2'){for(const letter of task.result.letters)if(letter.status==='draft')letter.status=letterReadyStatus(letter);refreshSummary(task);}
-let writes=Promise.resolve();function save(){const snapshot=JSON.stringify(db);writes=writes.catch(()=>{}).then(async()=>{await fs.writeFile(stateFile+'.tmp',snapshot,{mode:0o600});await fs.rename(stateFile+'.tmp',stateFile)});return writes}
-if(resourcesUpgraded)await save();
+let writes=Promise.resolve();function save(){const snapshot=structuredClone(db);writes=writes.catch(()=>{}).then(()=>repository.save(snapshot));return writes}
+if(resourcesUpgraded||!repository.initial.letterResources)await save();
 const allowed=new Set((process.env.TX_ALLOWED_ORIGINS||'http://127.0.0.1:5173,http://localhost:5173').split(',').filter(Boolean));
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))}
 async function body(req){let chunks=[],size=0;for await(const c of req){size+=c.length;if(size>15*1024*1024)throw new Error('请求不能超过 15MB');chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString())}catch{throw new Error('请求体须为有效 JSON')}}
@@ -40,7 +50,32 @@ async function simulationAssets(input,ids,notes,templateCatalog){
  }
  await save();return assets;
 }
+async function renderExport(payload){
+ const python=await resolveExportPython(root);
+ await new Promise((resolve,reject)=>{const child=spawn(python,[path.join(root,'backend/export_letters.py')],{stdio:['pipe','pipe','pipe'],timeout:30000});child.stderr.resume();child.on('error',()=>reject(new Error('无法启动 Word 导出，请配置 TX_PYTHON 并安装 python-docx')));child.on('close',code=>code===0?resolve():reject(new Error('Word 导出失败，请检查 Python 和 python-docx 环境')));child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(payload));});
+}
+async function importKnowledge(b){
+ if(b.text)return knowledge.ingest(b);
+ const name=path.basename(String(b.name||'')),ext=path.extname(name).toLowerCase();
+ if(!['.pdf','.docx','.doc','.txt','.md'].includes(ext)||typeof b.base64!=='string'||!/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64))throw new Error('请选择PDF、Word或文本资料');
+ const bytes=Buffer.from(b.base64,'base64');if(!bytes.length||bytes.length>10*1024*1024)throw new Error('资料文件须为1字节至10MB');
+ const dir=path.join(stateDir,'knowledge');await fs.mkdir(dir,{recursive:true});const file=path.join(dir,crypto.randomUUID()+ext);await fs.writeFile(file,bytes,{mode:0o600});
+ try{
+  const python=await resolveExportPython(root);
+  const text=await new Promise((resolve,reject)=>{const child=spawn(python,[path.join(root,'backend/knowledge_extract.py'),file],{stdio:['ignore','pipe','pipe'],timeout:45000});let out='',error='';child.stdout.on('data',chunk=>out+=chunk);child.stderr.on('data',chunk=>error+=chunk);child.on('error',()=>reject(new Error('无法启动资料解析，请检查Python组件')));child.on('close',code=>{if(code!==0)return reject(new Error(/超过|请拆分/.test(error)?'资料超过解析限制，请按章节拆分':'文件解析失败；扫描PDF请先完成OCR，旧DOC请转换为DOCX'));try{resolve(JSON.parse(out).text)}catch{reject(new Error('资料解析结果无效'))}});});
+  const result=await knowledge.ingest({...b,text,title:b.title||name,metadata:{name,path:file,source:b.source||name}});
+  if(result.reused)await fs.unlink(file);return result;
+ }catch(e){await fs.unlink(file).catch(()=>{});throw e;}
+}
+async function exportMaterialsChecklist(task,b){
+ const id='FILE-'+crypto.randomUUID(),output=path.join(stateDir,'exports',id+'.docx');
+ const checklist=materialsChecklistData(task.result.letters,{projectName:task.input.project.name,routeId:task.routeIds[0],version:task.projectVersion,stale:!!b.stale,simulation:!!task.simulation});
+ await renderExport({output,format:'materials-docx',letters:[],checklist});
+ const name=(task.simulation?'模拟测试_':'')+'协议征询函_资料核对与补充清单.docx';
+ db.files[id]={path:output,name};await save();return {fileId:id,name,url:'/api/v1/files/'+id};
+}
 async function exportTask(task,b){
+ if(b.format==='materials-docx')return exportMaterialsChecklist(task,b);
  const letters=b.letterId?task.result.letters.filter(l=>l.id===b.letterId):task.result.letters;
  if(!letters.length||b.format!=='xlsx'&&letters.some(l=>!['draft','confirmed',...(task.simulation?['simulated']:[])].includes(l.status)))throw new Error('所选函件存在阻断项或生成失败，请修正后再导出');
  if(b.format!=='xlsx'&&task.simulation&&letters.some(l=>l.status!=='simulated'))throw new Error('模拟流程未完成检查和自动模拟确认，不能导出');
@@ -48,9 +83,9 @@ async function exportTask(task,b){
  const id='FILE-'+crypto.randomUUID(),output=path.join(stateDir,'exports',id+'.'+b.format);
  const exportAssets=await assetsOnDisk();
  if(b.format!=='xlsx'&&letters.some(l=>l.attachments.some(a=>!a.assetId||!exportAssets[a.assetId])))throw new Error('实际附件不存在或已移除，请重新关联文件并核对后导出');
- const python=await resolveExportPython(root);
- await new Promise((resolve,reject)=>{const child=spawn(python,[path.join(root,'backend/export_letters.py')],{stdio:['pipe','pipe','pipe'],timeout:30000});let err='';child.stderr.on('data',c=>err+=c);child.on('error',()=>reject(new Error('无法启动 Word 导出，请配置 TX_PYTHON 并安装 python-docx')));child.on('close',code=>code===0?resolve():reject(new Error('Word 导出失败，请检查 Python 和 python-docx 环境')));child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({output,format:b.format,letters,assets:exportAssets,simulation:task.simulation||null}));});
- const name=(task.simulation?'模拟测试_':'')+(b.format==='docx'?letters[0].unit+'_征询函':b.format==='xlsx'?'协议征询台账':'协议征询函件包')+'.'+b.format;db.files[id]={path:output,name};await save();return {fileId:id,name,url:'/api/v1/files/'+id};
+ await renderExport({output,format:b.format,letters,assets:exportAssets,simulation:task.simulation||null});
+ const prefix=task.simulation?'模拟测试_':b.format!=='xlsx'&&letters.some(l=>l.status!=='confirmed')?'草稿_':'';
+ const name=prefix+(b.format==='docx'?letters[0].unit+'_征询函':b.format==='xlsx'?'协议征询台账':'协议征询函件包')+'.'+b.format;db.files[id]={path:output,name};await save();return {fileId:id,name,url:'/api/v1/files/'+id};
 }
 const server=http.createServer(async(req,res)=>{try{
  const host=req.headers.host||'',origin=req.headers.origin;
@@ -59,23 +94,52 @@ const server=http.createServer(async(req,res)=>{try{
  if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type')}
  if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
  const p=new URL(req.url,'http://localhost').pathname;
+ if(req.method==='GET'&&p==='/api/v1/storage'){json(res,200,await databaseStatus(repository));return}
+ if(req.method==='GET'&&p==='/api/v1/projects'){json(res,200,{engine:repository.engine,records:projects?await projects.list():[]});return}
+ if(req.method==='GET'&&p==='/api/v1/tasks'){
+  const query=new URL(req.url,'http://localhost').searchParams,id=query.get('projectId'),version=query.get('version');
+  json(res,200,{tasks:Object.values(db.tasks).filter(t=>(!id||t.projectId===id)&&(!version||t.projectVersion===version)).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))});return;
+ }
+ if(req.method==='GET'&&p==='/api/v1/knowledge'){json(res,200,{settings:knowledge.settings(),documents:repository.pool?await knowledge.list():[]});return}
+ const knowledgeOriginal=p.match(/^\/api\/v1\/knowledge\/([A-Za-z0-9-]+)\/original$/);
+ if(req.method==='GET'&&knowledgeOriginal){const f=await knowledge.original(knowledgeOriginal[1]);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,'Cache-Control':'no-store'});res.end(f.content);return}
  if(req.method==='GET'&&p==='/api/v1/letter-resources'){json(res,200,db.letterResources);return}
  if(req.method==='GET'&&p==='/api/v1/model-config'){json(res,200,model.publicView());return}
  const fileMatch=p.match(/^\/api\/v1\/files\/([A-Za-z0-9-]+)$/);
  if(req.method==='GET'&&fileMatch){const f=db.files[fileMatch[1]];if(!f){json(res,404,{error:{message:'导出文件不存在'}});return}const content=await fs.readFile(f.path);res.writeHead(200,{'Content-Type':f.name.endsWith('.zip')?'application/zip':f.name.endsWith('.xlsx')?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,'Cache-Control':'no-store'});res.end(content);return}
  if(req.method!=='POST'){json(res,404,{error:{message:'这是后端服务，请在 http://127.0.0.1:5173 打开前端'}});return}
  if(!req.headers['content-type']?.startsWith('application/json'))throw new Error('请使用 application/json');const b=await body(req);
- if(p==='/api/v1/letter-resources'){if(b.action==='recommend'){json(res,200,recommendRecipients(db.letterResources,b.lettersInput));return}db.letterResources=updateLetterResources(db.letterResources,b);await save();json(res,200,db.letterResources);return}
+ if(p==='/api/v1/projects'){if(!projects)throw new Error('工程数据库未启用，请配置PostgreSQL');json(res,200,b.action==='reset'?await projects.reset(b):await projects.save(b));return}
+ if(p==='/api/v1/knowledge'){
+  let result;
+  if(b.action==='configure')result=await knowledge.configure(b);
+  else if(b.action==='test')result=await knowledge.test();
+  else if(b.action==='ingest')result=await importKnowledge(b);
+  else if(b.action==='sync-templates')result=await knowledge.syncTemplates(db.letterResources.templates);
+  else if(b.action==='search')result=await knowledge.search(b);
+  else if(b.action==='set-enabled')result=await knowledge.setEnabled(b.id,b.enabled);
+  else if(b.action==='detail')result=await knowledge.detail(b.id);
+  else if(b.action==='index')result=await knowledge.indexDocument(b.id);
+  else throw new Error('未知知识资料操作');
+  json(res,200,result);return;
+ }
+ if(p==='/api/v1/letter-resources'){if(b.action==='recommend'){json(res,200,recommendRecipients(db.letterResources,b.lettersInput));return}db.letterResources=updateLetterResources(db.letterResources,b);await save();await knowledge.invalidateTemplates(db.letterResources.templates);json(res,200,db.letterResources);return}
  if(p==='/api/v1/model-config'){json(res,200,await model.update(b));return}
+ if(p==='/api/v1/letter-input/parse'){json(res,200,await readLetterWorkbook(root,b));return}
  if(p==='/api/v1/model-test'){const r=await chatJSON(model.get(),[{role:'system',content:'仅输出JSON对象。'},{role:'user',content:'返回 {"ok":true}，用于连通性检查，不生成其他内容。'}],{timeout:180000});if(r.output.ok!==true)throw new Error('已收到模型响应，但 JSON 格式检查未通过');json(res,200,{ok:true,model:r.model,durationMs:r.durationMs,stream:r.stream,thinkingMode:r.thinkingMode,usage:r.usage});return}
  if(p==='/api/v1/assets'){
   const name=path.basename(String(b.name||'')),extension=path.extname(name).toLowerCase();if(!['.pdf','.docx','.doc','.xlsx','.xls','.csv','.txt','.png','.jpg','.jpeg','.dwg','.dxf'].includes(extension))throw new Error('附件类型不支持');
   if(typeof b.base64!=='string'||!/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64))throw new Error('附件编码无效');const bytes=Buffer.from(b.base64,'base64');if(!bytes.length||bytes.length>10*1024*1024)throw new Error('单个附件须为 1 字节至 10MB');
   const id='ASSET-'+crypto.randomUUID(),file=path.join(stateDir,'assets',id+extension);await fs.writeFile(file,bytes,{mode:0o600});db.assets[id]={id,name,path:file,size:bytes.length};await save();json(res,201,{id,name,size:bytes.length});return;
  }
- if(p==='/api/v1/context'){validateContext(b);const existing=Object.values(db.contexts).find(x=>x.context.project.id===b.project.id&&x.context.project.version===b.project.version);if(existing){if(JSON.stringify(existing.context)!==JSON.stringify(b))throw new Error('同一工程快照不可覆盖，请更新 project.version');json(res,200,{contextId:existing.id});return}const id='CTX-'+crypto.randomUUID();db.contexts[id]={id,context:b};await save();json(res,201,{contextId:id});return}
+ if(p==='/api/v1/context'){
+  validateContext(b);const {entry,created}=registerContext(db.contexts,b);
+  if(created)await save();
+  json(res,created?201:200,{contextId:entry.id,contextRevision:entry.revision||1});return;
+ }
  if(p==='/api/v1/tasks'){
   const ctx=db.contexts[b.contextId];if(!ctx)throw new Error('工程上下文不存在');
+  if(ctx.context.contextType==='letters'&&b.agentType!=='letters')throw new Error('当前工程仅包含征询函资料，请先导入对应智能体所需的路径与空间参数');
   const simulation=b.agentType==='letters'&&b.options?.simulation===true;
   const snapshot=model.get(),mode=simulation?'llm':b.options?.mode||((snapshot.apiKey||snapshot.model)?'llm':'template');
   if(!['llm','template'].includes(mode))throw new Error('生成模式须为 llm 或 template');
@@ -90,13 +154,15 @@ const server=http.createServer(async(req,res)=>{try{
   if(simulation){task.simulation={kind:'fictional-test',stage:'准备中',agreementIds:task.result.letters.flatMap(l=>l.agreementIds),confirmations:[]};task.status='running';task.startedAt=new Date().toISOString();task.progress='正在准备模拟流程';for(const l of task.result.letters){l.status='pending';l.bodyBlocks=[];l.text='等待模拟资料补全';l.simulation=true;}task.steps=[{name:'大模型补齐模拟资料'},{name:'创建模拟附件并检查'},{name:'大模型起草并检查'},{name:'自动模拟确认'},{name:'导出 Word / ZIP'}];}
   db.tasks[task.id]=task;await save();json(res,201,task);
   if(task.status==='running'){
-   const generating=simulation?runSimulation(task,snapshot,{save,createAssets:(input,ids,notes)=>simulationAssets(input,ids,notes,task.templateCatalog),exportZip:t=>exportTask(t,{format:'zip'})}):b.agentType==='letters'?generateLetters(task,snapshot,save):generateDesign(task,ctx.context,snapshot,save);
+   const retrievalSnapshot=knowledge.snapshot(snapshot);
+   const generating=simulation?runSimulation(task,snapshot,{save,createAssets:(input,ids,notes)=>simulationAssets(input,ids,notes,task.templateCatalog),exportZip:t=>exportTask(t,{format:'zip'})}):b.agentType==='letters'?generateLetters(task,snapshot,save,{retrieve:(letter,input)=>knowledge.forLetter(letter,input,retrievalSnapshot)}):generateDesign(task,ctx.context,snapshot,save);
    generating.catch(async()=>{task.status='failed';task.error='任务执行中断，请重新起草';task.finishedAt=new Date().toISOString();if(task.schemaVersion==='letters-v2'){for(const l of task.result.letters)if(['pending','generating','checking'].includes(l.status)){l.status='failed';l.error=task.error;l.bodyBlocks=[];l.text=task.error;l.live={...l.live,phase:'failed'};}refreshSummary(task);}await save()});
   }
   return;
  }
  const match=p.match(/^\/api\/v1\/tasks\/([A-Za-z0-9-]+)$/);if(match){const task=db.tasks[match[1]];if(!task)throw new Error('任务不存在');if(b.action==='status'){json(res,200,task);return}
   if(task.schemaVersion==='letters-v2'){
+   if(b.action==='export'&&b.format==='materials-docx'){json(res,200,await exportMaterialsChecklist(task,b));return}
    if(task.status==='running')throw new Error('任务仍在生成，请稍后操作');
    if(b.action==='export'){json(res,200,await exportTask(task,b));return}
    if(task.simulation)throw new Error('模拟记录独立保存，不进行人工复核或修改；请返回真实资料编辑，或重新运行模拟流程');
@@ -106,5 +172,5 @@ const server=http.createServer(async(req,res)=>{try{
   }else{if(b.action!=='confirm')throw new Error('action 须为 status 或 confirm');confirmTask(task,b)}await save();json(res,200,task);return;
  }
  json(res,404,{error:{message:'接口不存在'}});
-}catch(e){if(!res.headersSent)json(res,400,{error:{code:'VALIDATION_ERROR',message:e.message}});else res.end()}});
+}catch(e){if(!res.headersSent)json(res,e.status||400,{error:{code:'VALIDATION_ERROR',message:e.message}});else res.end()}});
 server.listen(port,'127.0.0.1',()=>process.stdout.write(`输电智能体后端：http://127.0.0.1:${port}\n协议征询函已接入模板生成、大模型、人工复核和 Word 导出\n`));

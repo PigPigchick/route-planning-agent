@@ -9,7 +9,7 @@ export function createLettersTask(context,b,assets){
  const letters=planLetters(input,b.options,assets);for(const l of letters){if(b.options.validationResources&&!b.options.simulation)validateRecipientReferences(l,input,input.agreements.find(a=>l.agreementIds.includes(a.id)),b.options.validationResources);l.status=letterReadyStatus(l);if(mode==='llm'&&l.status!=='blocked'){l.status='pending';l.bodyBlocks=[];l.text='等待大模型生成';l.generation={mode:'llm'}}else l.status=letterReadyStatus(l);}
  return refreshSummary({id:'TASK-'+crypto.randomUUID(),schemaVersion:'letters-v2',agentType:'letters',projectId:input.project.id,projectVersion:input.project.version,routeIds:[input.route.id],contextId:b.contextId,createdAt:new Date().toISOString(),revision:1,status:mode==='llm'?'running':'awaiting_confirmation',mode,input,listConfirmation:b.options.listConfirmation||null,templateCatalog:b.options.templateCatalog,confirmations:[],steps:[{name:'读取协议清单',detail:'按行政区域、部门、完成情况筛选事项'},{name:'匹配模板与缺项检查',detail:'按协议类型匹配；跨越参数和附件逐项检查'},{name:mode==='llm'?'调用大模型组织文字':'按模板形成正文',detail:'数值和附件由程序固定引用'},{name:'人工复核与导出',detail:'资料齐全后逐函确认'}],result:{title:'协议征询函件',letters}});
 }
-export async function generateLetters(task,config,save,{keepRunning=false}={}){
+export async function generateLetters(task,config,save,{keepRunning=false,retrieve}={}){
  task.startedAt??=new Date().toISOString();
  for(const letter of task.result.letters){
   if(letter.status==='blocked')continue;
@@ -18,6 +18,7 @@ export async function generateLetters(task,config,save,{keepRunning=false}={}){
   let savedAt=0;
   try{
    let result,bodyBlocks;const attempts=[];
+   if(retrieve){letter.live.phase='retrieving';task.progress='正在检索参考资料：'+letter.unit;await save();letter.retrieval=await retrieve(letter,task.input);await save();}
    for(let attempt=1;attempt<=2;attempt++){
    letter.status='generating';letter.live.phase='waiting';letter.live.attempt=attempt;
    task.progress=attempt>1?'正文校验未通过，正在自动修正：'+letter.unit:'正在起草：'+letter.unit;await save();

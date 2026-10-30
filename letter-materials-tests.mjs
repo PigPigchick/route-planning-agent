@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {materialCheckItems,materialsChecklistMarkdown} from './dist/letter-materials.mjs';
+import {materialCheckItems,materialsChecklistMarkdown,materialsChecklistData} from './dist/letter-materials.mjs';
 import {extractSourceFacts,fillMissingFromSource,matchSourceAttachment,attachmentKindFromName} from './backend/letter-source-audit.mjs';
 import {SAMPLE} from './dist/engine.mjs';import {createLettersInput} from './dist/letters-core.mjs';
 test('未录入、未关联及待确认分开，不将未关联文件认定为未提供',()=>{
@@ -15,4 +15,13 @@ test('补录仅填空值，不覆盖已有事实，不自动猜收函单位或�
 });
 test('附件精确匹配限定工程范围，同名不同内容待核对，回复文件不充当路径图',()=>{
  const files=[{path:'工程A/复函/附件：路径图.pdf',sha256:'a'},{path:'工程B/路径图.pdf',sha256:'b'},{path:'工程A/路径图的复函.pdf',sha256:'c'}];const m=matchSourceAttachment('路径图',files,{scopePrefix:'工程A/'});assert.equal(m.status,'matched');assert.equal(m.file.sha256,'a');assert.throws(()=>matchSourceAttachment('路径图',files),/限定/);assert.equal(matchSourceAttachment('路径图',[...files,{path:'工程A/路径图.dwg',sha256:'z'}],{scopePrefix:'工程A/'}).status,'ambiguous');assert.equal(matchSourceAttachment('坐标表',files,{scopePrefix:'工程A/'}).status,'unresolved');assert.match(matchSourceAttachment('坐标表',files,{scopePrefix:'工程A/'}).reason,/不能据此认定未提供/);assert.equal(attachmentKindFromName('线路路径地形图（1:4万）'),'路径图');assert.equal(attachmentKindFromName('路径盖章图'),'路径图');assert.equal(attachmentKindFromName('线路转角位中心点坐标表'),'坐标表');
+});
+
+test('Word清单保持单位、协议编号、分类和补充建议，普通中文不做Markdown转义',()=>{
+ const letters=[{agreementIds:['L-1','L-2'],unit:'核对单位甲',status:'failed',error:'输入资料有冲突',missingFields:[{field:'unit',label:'收函单位',blocking:true},{field:'attachments.1',label:'路径图实际文件'}]}];
+ const before=structuredClone(letters),data=materialsChecklistData(letters,{projectName:'工程甲|乙',routeId:'P01',version:'v2',stale:true,simulation:true,exportedAt:'2026-10-30T00:00:00Z'});
+ assert.equal(data.itemCount,2);assert.equal(data.projectName,'工程甲|乙');assert.ok(data.stale&&data.simulation);
+ assert.deepEqual(data.groups[0].agreementIds,['L-1','L-2']);assert.equal(data.groups[0].error,'输入资料有冲突');
+ assert.deepEqual(data.groups[0].items,materialCheckItems(letters[0]));assert.deepEqual(letters,before);
+ assert.equal(materialsChecklistData([]).itemCount,0);
 });

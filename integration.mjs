@@ -3,6 +3,7 @@ import http from 'node:http';import {spawn} from 'node:child_process';
 import {mkdtemp,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import path from 'node:path';
 import {SAMPLE,clone} from './dist/engine.mjs';import {createLettersInput} from './dist/letters-core.mjs';
+import {letterContext} from './dist/letter-table.mjs';
 const dir=await mkdtemp(path.join(tmpdir(),'tx-studio-qa-'));let child,logs='',calls=0;
 const mock=http.createServer(async(req,res)=>{let text='';for await(const c of req)text+=c;const b=JSON.parse(text);assert.equal(req.url,'/v1/chat/completions');assert.equal(req.headers.authorization,'Bearer qa-synthetic-key');assert.equal(b.model,'qa-model');calls++;let out={ok:true};if(b.messages[1].content.includes('allowedPlaceholders')){const meta=JSON.parse(b.messages[1].content);assert.ok(!text.includes(SAMPLE.project.name));out={bodyBlocks:['{{projectOverview}}','{{routeSummary}}',...(meta.allowedPlaceholders.includes('{{specialFacts}}')?['{{specialFacts}}']:[]),'{{requestItems}}','专此函达，请予支持。']}}res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({model:'qa-model',choices:[{finish_reason:'stop',message:{content:JSON.stringify(out)}}],usage:{total_tokens:20}}))});
 async function start(){child=spawn(process.execPath,['server.mjs'],{env:{...process.env,PORT:'4320',TX_DATA_DIR:dir,LLM_BASE_URL:'',LLM_MODEL:'',LLM_API_KEY:''},stdio:['ignore','pipe','pipe']});child.stdout.on('data',d=>logs+=d);child.stderr.on('data',d=>logs+=d);await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);child.once('exit',code=>{if(code)reject(new Error(logs))})})}
@@ -14,6 +15,17 @@ try{
  const changed=clone(SAMPLE);changed.routes[0].length=44;await post('/api/v1/context',changed,400);
  for(const type of ['comparison','compliance','description']){const t=await post('/api/v1/tasks',{contextId:ctx.contextId,agentType:type,routeIds:type==='comparison'?['A','B','C']:['A']},201);assert.equal((await post('/api/v1/tasks/'+t.id,{action:'confirm',expectedRevision:1,reviewer:'QA',note:'回归验证'})).status,'confirmed')}
  const missing=await post('/api/v1/tasks',{contextId:ctx.contextId,agentType:'letters',routeIds:['A']},201);assert.equal(missing.result.letters.length,3);await post('/api/v1/tasks/'+missing.id,{action:'confirm',letterId:'LETTER-1',expectedRevision:1,reviewer:'QA',note:'不得确认缺项'},400);
+ const editableInput=createLettersInput(SAMPLE,SAMPLE.routes[0]);editableInput.agreements=editableInput.agreements.slice(0,1);
+ const letterCtx=await post('/api/v1/context',letterContext(editableInput),201);
+ const originalLetter=await post('/api/v1/tasks',{contextId:letterCtx.contextId,agentType:'letters',routeIds:['A'],options:{mode:'template',lettersInput:editableInput}},201);
+ const revisedInput=clone(editableInput);revisedInput.project.name='编辑后的工程';revisedInput.project.overview='编辑后的工程概况';revisedInput.route.summary='编辑后的路径描述';revisedInput.agreements[0].points='编辑后的征询事项';
+ const revisedCtx=await post('/api/v1/context',letterContext(revisedInput),201);
+ assert.notEqual(letterCtx.contextId,revisedCtx.contextId);assert.equal(revisedCtx.contextRevision,letterCtx.contextRevision+1);
+ const revisedLetter=await post('/api/v1/tasks',{contextId:revisedCtx.contextId,agentType:'letters',routeIds:['A'],options:{mode:'template',lettersInput:revisedInput}},201);
+ assert.match(revisedLetter.result.letters[0].text,/编辑后的工程概况/);assert.match(revisedLetter.result.letters[0].text,/编辑后的征询事项/);
+ assert.deepEqual((await post('/api/v1/tasks/'+originalLetter.id,{action:'status'})).input,editableInput);
+ assert.equal((await post('/api/v1/context',letterContext(editableInput))).contextId,letterCtx.contextId);
+ assert.equal((await post('/api/v1/context',letterContext(revisedInput))).contextId,revisedCtx.contextId);
  const config=await post('/api/v1/model-config',{baseUrl:'http://127.0.0.1:4321/v1',model:'qa-model',apiKey:'qa-synthetic-key',jsonMode:true});assert.equal(config.keyConfigured,true);assert.ok(!JSON.stringify(config).includes('qa-synthetic-key'));assert.equal((await post('/api/v1/model-test',{})).ok,true);
  const asset=await post('/api/v1/assets',{name:'QA路径示意图.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9ZkAAAAASUVORK5CYII='},201);
  const input=createLettersInput(SAMPLE,SAMPLE.routes[0]);Object.assign(input.project,{issuer:'示例设计单位',issueDate:'2026-10-22',contactName:'演示联系人',contactPhone:'演示电话待实际替换',replyAddress:'演示复函地址'});input.agreements=input.agreements.slice(0,1);input.templateConfirmed=true;input.agreements[0].attachments=[{name:asset.name,kind:'路径图',assetId:asset.id,routeVersion:input.project.version}];
@@ -22,6 +34,10 @@ try{
  t=await post('/api/v1/tasks/'+t.id,{action:'confirm',letterId:'LETTER-1',expectedRevision:2,reviewer:'QA复核',note:'演示输入、正文、数值和附件已核对'});assert.equal(t.status,'confirmed');
  await mkdir('outputs',{recursive:true});for(const format of ['docx','zip']){const file=await post('/api/v1/tasks/'+t.id,{action:'export',format,letterId:'LETTER-1'});const r=await fetch(origin+file.url),bytes=Buffer.from(await r.arrayBuffer());assert.equal(r.status,200);assert.equal(bytes.subarray(0,2).toString(),'PK');await writeFile('outputs/QA协议征询函.'+format,bytes)}
  const records=await readFile(path.join(dir,'records.json'),'utf8');assert.ok(!records.includes('qa-synthetic-key'));await stop();await start();assert.equal((await post('/api/v1/tasks/'+t.id,{action:'status'})).status,'confirmed');const publicConfig=await (await fetch(origin+'/api/v1/model-config')).json();assert.equal(publicConfig.keyConfigured,true);assert.ok(!JSON.stringify(publicConfig).includes('qa-synthetic-key'));
+ assert.equal((await post('/api/v1/context',letterContext(revisedInput))).contextId,revisedCtx.contextId);
+ assert.equal((await post('/api/v1/tasks/'+originalLetter.id,{action:'status'})).contextId,letterCtx.contextId);
+ const snapshots=JSON.parse(await readFile(path.join(dir,'records.json'),'utf8')).contexts;
+ assert.deepEqual(snapshots[letterCtx.contextId].context,letterContext(editableInput));assert.deepEqual(snapshots[revisedCtx.contextId].context,letterContext(revisedInput));
  assert.equal((await fetch(origin+'/api/v1/model-config',{headers:{Origin:'https://untrusted.example'}})).status,403);assert.equal(calls,2);
  console.log('HTTP 联调通过：其他三个智能体回归；函件缺项阻止确认；模拟模型端到端调用；数值引用；附件上传；编辑版本控制；逐函复核；Word/ZIP 实际下载；配置及任务重启持久化；密钥不回传。');
 }finally{await stop();await new Promise(r=>mock.close(r));await rm(dir,{recursive:true,force:true})}

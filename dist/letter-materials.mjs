@@ -13,6 +13,10 @@ export function materialCheckItems(letter){
  });
 }
 const md=s=>String(s??'').replace(/\|/g,'\\|').replace(/[\r\n]+/g,' ');
+export function materialsChecklistData(letters,{projectName='',routeId='',version='',stale=false,simulation=false,exportedAt=new Date().toISOString()}={}){
+ const groups=letters.map(letter=>({agreementIds:[...(letter.agreementIds||[])],unit:letter.unit||'收函单位待填写',status:letter.status||'',error:letter.error||'',items:materialCheckItems(letter)}));
+ return {title:'协议征询函资料核对与补充清单',projectName,routeId,version,stale:!!stale,simulation:!!simulation,exportedAt,groups,itemCount:groups.reduce((n,g)=>n+g.items.length,0)};
+}
 export function materialsChecklistMarkdown(letters,{projectName='',routeId='',version='',stale=false}={}){
  const lines=['# 协议征询函资料核对与补充清单','',`工程：${md(projectName)}　路径：${md(routeId)}　版本：${md(version)}`,'',...(stale?['注意：当前输入有资料待同步，本清单依据上一次已同步的任务生成。','']:[]),'本清单区分“信息未录入”“附件待关联”和“待核对”。未填写或未关联不等于甲方未提供；先核对现有资料，确实没有时再补充。','', '| 协议编号 | 收函单位 | 类别 | 具体项目 | 当前情况 | 处理方式 |','|---|---|---|---|---|---|'];
  let count=0;

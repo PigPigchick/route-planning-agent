@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import argparse, hashlib, io, json, re, zipfile
 
 ROOT=Path(__file__).resolve().parent.parent
-ROOT_FILES=['package.json','requirements.txt','.env.example','.gitignore','README.md','LETTERS.md']
+ROOT_FILES=['package.json','package-lock.json','requirements.txt','.env.example','.gitignore','README.md','LETTERS.md']
 FOLDERS=['backend','dist','scripts','使用文档与样例']
 BLOCKED={'.local-data','.git','node_modules','.venv','__pycache__','outputs','release','_build','.openai','analysis'}
 
