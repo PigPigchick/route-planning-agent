@@ -17,7 +17,10 @@
     "test:word-layout": "node --test word-layout-tests.mjs",
     "setup:database": "node scripts/setup-postgres.mjs",
     "test:postgres-rag": "node postgres-rag-integration.mjs",
-    "backup:database": "node scripts/backup-database.mjs"
+    "backup:database": "node scripts/backup-database.mjs",
+    "restore:library": "node scripts/restore-template-library.mjs",
+    "start:local": "node scripts/start-local.mjs",
+    "status:local": "node scripts/start-local.mjs --status"
   },
   "engines": {
     "node": ">=22"

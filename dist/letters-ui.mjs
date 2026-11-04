@@ -1,4 +1,5 @@
 import {readLettersDocument} from './letter-input-document.mjs';
+import {jsonEqual} from './json-values.mjs';
 import {emptyLettersInput} from './workspace-state.mjs';
 import {rankAgreements,searchSummary} from './letter-search.mjs';
 import {materialCheckItems} from './letter-materials.mjs';
@@ -67,7 +68,7 @@ async function api(p,b,target=env){const r=await fetch((target.config.baseUrl||'
 function put(t,target=env){target.saveTask({...t,source:target.config.baseUrl||'http://127.0.0.1:4318'})}
 const statusLabels={draft:'草稿待复核',incomplete:'资料待处理',needs_rewrite:'正文待重写',blocked:'资料阻断',failed:'生成或检查失败',pending:'排队等待',generating:'正文生成中',checking:'正文检查中',confirmed:'已人工复核',simulated:'已模拟确认'};
 const inProgress=l=>['pending','generating','checking'].includes(l?.status);
-const inputChanged=t=>t&&!t.simulation&&JSON.stringify(t.input)!==JSON.stringify(state.input);
+const inputChanged=t=>t&&!t.simulation&&!jsonEqual(t.input,state.input);
 export function preserveLettersMenu(render){
  const searchFocused=document.activeElement?.id==='letter-agreement-search',searchField=searchFocused?document.activeElement:null;
  if(searchField?.dataset?.composing==='true')return;

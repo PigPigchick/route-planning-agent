@@ -1,4 +1,5 @@
 import {SPECIAL_LETTER_TEMPLATES,CROSSING_FIELDS,crossingRows,validateCrossingRows,crossingTables,normalizeAttachmentName,requestParagraph,buildLetterTitle,assembleTemplateBody} from './letter-rules.mjs';
+import {jsonEqual} from './json-values.mjs';
 // 函件结构来自两批用户参考资料的字段归纳；以下为可审阅模板，不复用历史印章、联系人或批复事实。
 export const LETTER_TEMPLATES = [
  {id:'general',name:'一般路径征询',version:'1.0',source:'部门发函样例／林业、政府、生态环境',required:[],attachments:['路径图'],purpose:'征询所辖范围内线路路径方案的意见及后续协调要求'},
@@ -74,10 +75,10 @@ export function updateLettersInput(task,b,assets={}){
  const removed=task.result.letters.filter(l=>!remaining.includes(l));
  const ids=remaining.flatMap(l=>l.agreementIds);
  const planned=ids.length?planLetters(input,{agreementIds:ids,templateCatalog:task.templateCatalog},assets):[];
- const at=new Date().toISOString();let changed=JSON.stringify(task.input)!==JSON.stringify(input);
+ const at=new Date().toISOString();let changed=!jsonEqual(task.input,input);
  const letters=remaining.map((old,index)=>{
   const fresh=planned[index];
-  const contentChanged=JSON.stringify(draftingFacts(task.input,old.agreementIds[0]))!==JSON.stringify(draftingFacts(input,old.agreementIds[0]));
+  const contentChanged=!jsonEqual(draftingFacts(task.input,old.agreementIds[0]),draftingFacts(input,old.agreementIds[0]));
   const needsRewrite=old.needsRewrite===true||contentChanged;
   let next={...old,...fresh,id:old.id,revision:old.revision,confirmations:old.confirmations,correspondence:old.correspondence,correspondenceHistory:old.correspondenceHistory,edits:old.edits,generation:old.generation,bodyBlocks:old.bodyBlocks,bodyTemplate:old.bodyTemplate,needsRewrite};
   next.status=letterReadyStatus(fresh);
@@ -87,7 +88,7 @@ export function updateLettersInput(task,b,assets={}){
   }
   if(next.status!=='failed')delete next.error;
   next.text=renderLetterText(next);
-  const affected=JSON.stringify({...next,status:undefined,revision:undefined})!==JSON.stringify({...old,status:undefined,revision:undefined});
+  const affected=!jsonEqual({...next,status:undefined,revision:undefined},{...old,needsRewrite:old.needsRewrite===true,status:undefined,revision:undefined});
   if(!affected&&old.status==='confirmed'&&next.status==='draft')next.status='confirmed';
   if(affected||next.status!==old.status){next.revision++;changed=true;next.updatedAt=at;}
   return next;

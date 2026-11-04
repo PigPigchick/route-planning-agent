@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {SAMPLE} from './dist/engine.mjs';
-import {createLettersInput,updateLettersInput} from './dist/letters-core.mjs';
+import {createLettersInput,updateLettersInput,reviewLetter} from './dist/letters-core.mjs';
+import {jsonEqual} from './dist/json-values.mjs';
 import {createLettersTask} from './backend/letters-agent.mjs';
 import {renderLetters,handleLetters,preserveLettersMenu,searchLetterAgreements} from './dist/letters-ui.mjs';
 import {emptyWorkspace} from './dist/workspace-state.mjs';
@@ -21,6 +22,35 @@ function fixture({stale=false,count=1,generatedIds=null,initialSelected=null,wit
  env.render();
  return {input,task,env,storage,key,toasts,get html(){return html},get modal(){return modal},field:id=>document.querySelector(id)};
 }
+
+const reorderJson=value=>Array.isArray(value)?value.map(reorderJson):value&&typeof value==='object'
+ ?Object.fromEntries(Object.keys(value).reverse().map(key=>[key,reorderJson(value[key])])):value;
+
+test('数据库返回的对象字段顺序变化不会提示同步，真实资料变化仍会提示',()=>{
+ const f=fixture(),stored=JSON.parse(f.storage.get(f.key));
+ stored.input=reorderJson(stored.input);stored.importToken='reloaded-jsonb';f.storage.set(f.key,JSON.stringify(stored));f.env.render();
+ assert.doesNotMatch(f.html,/当前函件有资料待同步/);
+ stored.input.route.summary+='真实路径变更';stored.importToken='changed-jsonb';f.storage.set(f.key,JSON.stringify(stored));f.env.render();
+ assert.match(f.html,/当前函件有资料待同步/);
+ assert.equal(jsonEqual({values:[1,2]},{values:[2,1]}),false);
+});
+
+test('JSONB字段重排后同步同一资料保留正文与人工复核，真正修改路径才要求重写',()=>{
+ const input=createLettersInput(SAMPLE,SAMPLE.routes[0]);input.agreements=input.agreements.slice(0,1);input.templateConfirmed=true;
+ Object.assign(input.project,{issuer:'教程测试单位',issueDate:'2026-11-01',contactName:'测试人员',contactPhone:'测试电话',replyAddress:'测试地址'});
+ const assets={TEST:{id:'TEST',name:'测试路径图.txt'}};
+ input.agreements[0].attachments=[{name:'测试路径图.txt',kind:'路径图',assetId:'TEST',routeVersion:input.project.version}];
+ const task=createLettersTask(SAMPLE,{contextId:'ctx',routeIds:['A'],options:{mode:'template',lettersInput:input}},assets);
+ reviewLetter(task,{action:'confirm',letterId:task.result.letters[0].id,expectedRevision:1,reviewer:'测试复核员',note:'测试事实与附件已核对'});
+ const revision=task.revision,letterRevision=task.result.letters[0].revision;
+ task.input=reorderJson(task.input);task.result=reorderJson(task.result);
+ updateLettersInput(task,{expectedRevision:revision,lettersInput:structuredClone(input)},assets);
+ assert.equal(task.revision,revision);assert.equal(task.result.letters[0].revision,letterRevision);
+ assert.equal(task.result.letters[0].status,'confirmed');assert.equal(task.status,'confirmed');assert.equal(task.inputUpdates,undefined);
+ const changed=structuredClone(input);changed.route.summary+='真实路径变更';
+ updateLettersInput(task,{expectedRevision:task.revision,lettersInput:changed},assets);
+ assert.equal(task.result.letters[0].status,'needs_rewrite');assert.equal(task.result.letters[0].confirmations.length,1);
+});
 
 test('搜索排序后编辑索引对应原事项，勾选重绘保留排序，清空恢复原序且不变更输入',async()=>{
  const f=fixture({count:3,withoutTask:true}),before=JSON.parse(f.storage.get(f.key)),target=f.input.agreements[2];
