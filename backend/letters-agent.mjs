@@ -37,10 +37,10 @@ export async function generateLetters(task,config,save,{keepRunning=false,retrie
    }
    letter.bodyBlocks=bodyBlocks;letter.bodyTemplate=result.output.bodyBlocks;
    letter.status=letterReadyStatus(letter);letter.needsRewrite=false;
-   letter.generation={mode:'llm',model:result.model,usage:result.usage,durationMs:attempts.reduce((n,a)=>n+a.durationMs,0),stream:result.stream,thinkingMode:result.thinkingMode,promptVersion:'letters-paragraphs-v2',attempts,at:new Date().toISOString()};delete letter.generationAttempts;letter.text=renderLetterText(letter);
+   letter.generation={mode:'llm',model:result.model,usage:result.usage,durationMs:attempts.reduce((n,a)=>n+a.durationMs,0),stream:result.stream,thinkingMode:result.thinkingMode,promptVersion:'letters-paragraphs-v3',attempts,at:new Date().toISOString()};delete letter.generationAttempts;letter.text=renderLetterText(letter);
    letter.live.phase='complete';delete letter.previewText;
   }
-  catch(e){letter.status='failed';letter.error=e.message;letter.bodyBlocks=[];letter.text='生成或检查失败：'+e.message;letter.live.phase='failed';}
+  catch(e){letter.status='failed';letter.error=e.message;letter.bodyBlocks=[];if(!letter.previewText)delete letter.previewText;letter.text='生成或检查失败：'+e.message;letter.live.phase='failed';}
   letter.finishedAt=new Date().toISOString();
   refreshSummary(task);await save();
  }

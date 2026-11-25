@@ -7,7 +7,7 @@
     "dev:backend": "node server.mjs",
     "start": "node frontend.mjs",
     "test:integration": "node integration.mjs",
-    "test": "node --test database-rag-tests.mjs context-store-tests.mjs letter-input-document-tests.mjs workspace-state-tests.mjs dialog-interactions-tests.mjs letter-search-tests.mjs tests.mjs letters-tests.mjs letters-workflow-tests.mjs shared-model-tests.mjs portability-tests.mjs letters-actions-tests.mjs letters-simulation-tests.mjs letter-management-tests.mjs letter-rules-tests.mjs letter-materials-tests.mjs letter-table-tests.mjs word-layout-tests.mjs project-catalog-tests.mjs agent-sample-state-tests.mjs",
+    "test": "node --test database-rag-tests.mjs knowledge-scenario-tests.mjs context-store-tests.mjs letter-input-document-tests.mjs workspace-state-tests.mjs dialog-interactions-tests.mjs letter-search-tests.mjs tests.mjs letters-tests.mjs letters-workflow-tests.mjs shared-model-tests.mjs portability-tests.mjs letters-actions-tests.mjs letters-simulation-tests.mjs letter-management-tests.mjs letter-rules-tests.mjs letter-materials-tests.mjs letter-table-tests.mjs word-layout-tests.mjs project-catalog-tests.mjs agent-sample-state-tests.mjs",
     "test:simulation": "node letters-simulation-integration.mjs",
     "test:shared": "node shared-model-integration.mjs",
     "test:letters-workflow": "node letters-workflow-integration.mjs",
@@ -18,6 +18,7 @@
     "setup:database": "node scripts/setup-postgres.mjs",
     "test:postgres-rag": "node postgres-rag-integration.mjs",
     "backup:database": "node scripts/backup-database.mjs",
+    "reindex:embedding": "node scripts/rebuild-dedicated-index.mjs",
     "restore:library": "node scripts/restore-template-library.mjs",
     "start:local": "node scripts/start-local.mjs",
     "status:local": "node scripts/start-local.mjs --status"

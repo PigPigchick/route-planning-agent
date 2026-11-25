@@ -4,7 +4,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {validateContext,makeTask,confirmTask} from './dist/engine.mjs';
-import {reviewLetter,createLettersInput,updateLettersInput,letterReadyStatus,refreshSummary,LETTER_TEMPLATES,resolveLetterTemplate} from './dist/letters-core.mjs';
+import {reviewLetter,createLettersInput,updateLettersInput,letterReadyStatus,refreshSummary,LETTER_TEMPLATES,resolveLetterTemplate,assertLetterPublicationWording} from './dist/letters-core.mjs';
+import {findAlternativeWording} from './dist/letter-scenario.mjs';
 import {modelStore,loadLocalEnv,chatJSON,modelConfigSnapshot} from './backend/model.mjs';
 import {createLettersTask,generateLetters} from './backend/letters-agent.mjs';
 import {createDesignTask,generateDesign} from './backend/design-agents.mjs';
@@ -80,9 +81,12 @@ async function exportTask(task,b){
  if(!letters.length||b.format!=='xlsx'&&letters.some(l=>!['draft','confirmed',...(task.simulation?['simulated']:[])].includes(l.status)))throw new Error('所选函件存在阻断项或生成失败，请修正后再导出');
  if(b.format!=='xlsx'&&task.simulation&&letters.some(l=>l.status!=='simulated'))throw new Error('模拟流程未完成检查和自动模拟确认，不能导出');
  if(!['docx','zip','xlsx'].includes(b.format)||b.format==='docx'&&letters.length!==1)throw new Error('请选择单函Word、批量ZIP或Excel台账导出');
+ if(b.format!=='xlsx')for(const letter of letters)assertLetterPublicationWording(letter);
  const id='FILE-'+crypto.randomUUID(),output=path.join(stateDir,'exports',id+'.'+b.format);
  const exportAssets=await assetsOnDisk();
  if(b.format!=='xlsx'&&letters.some(l=>l.attachments.some(a=>!a.assetId||!exportAssets[a.assetId])))throw new Error('实际附件不存在或已移除，请重新关联文件并核对后导出');
+ if(b.format==='zip'&&letters.some(l=>!(l.round==='revised'&&l.allowAlternatives===true)
+   &&l.attachments.some(a=>findAlternativeWording(exportAssets[a.assetId]?.name))))throw new Error('附件原文件名含方案标识或比较表述，请核对并重新关联适用文件后导出');
  await renderExport({output,format:b.format,letters,assets:exportAssets,simulation:task.simulation||null});
  const prefix=task.simulation?'模拟测试_':b.format!=='xlsx'&&letters.some(l=>l.status!=='confirmed')?'草稿_':'';
  const name=prefix+(b.format==='docx'?letters[0].unit+'_征询函':b.format==='xlsx'?'协议征询台账':'协议征询函件包')+'.'+b.format;db.files[id]={path:output,name};await save();return {fileId:id,name,url:'/api/v1/files/'+id};

@@ -2,6 +2,7 @@
 export function materialCheckItems(letter){
  return (letter.missingFields||[]).map(m=>{
   const base={field:m.field,item:m.label,blocking:!!m.blocking};
+  if(m.field.startsWith('publication.'))return {...base,category:'待核对',state:'征询范围需要确认',action:'按轮次核对本次征询路径及函件表述。只有路径调整后确需比较时，才确认多方案比较并补齐前次意见和调整原因。'};
   if(m.field.startsWith('attachments.')){
    if(m.field.endsWith('.version'))return {...base,category:'待核对',state:'附件版本冲突',action:'核对所选路径版本与附件版本，关联一致版本的文件；无需直接要求重交全部附件。'};
    return {...base,category:'附件待关联',state:'未关联可用文件，尚不能判定资料未提供',action:'先核对已交付ZIP或工程文件库，关联对应文件；找不到时请业务方确认文件名、位置及适用区段，确未提供再补交。'};

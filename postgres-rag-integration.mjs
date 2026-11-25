@@ -15,12 +15,13 @@ import {knowledgeStore} from './backend/knowledge.mjs';
 await loadLocalEnv(process.cwd());if(!process.env.TX_DATABASE_URL)throw new Error('请先配置PostgreSQL');
 const name='tx_rag_qa_'+process.pid,dbUrl=new URL(process.env.TX_DATABASE_URL),adminUrl=new URL(dbUrl);adminUrl.pathname='/postgres';dbUrl.pathname='/'+name;
 const admin=new pg.Client({connectionString:adminUrl.toString()});await admin.connect();await admin.query('CREATE DATABASE "'+name+'"');
-const dir=await fs.mkdtemp(path.join(os.tmpdir(),'tx-pg-rag-')),origin='http://127.0.0.1:4340';let child,logs='',embeddings=0,generations=0;
+const dir=await fs.mkdtemp(path.join(os.tmpdir(),'tx-pg-rag-')),origin='http://127.0.0.1:4340';let child,logs='',embeddings=0,generations=0,badVector=false;
+const dedicatedRequests=[];
 const mock=http.createServer(async(req,res)=>{try{let raw='';for await(const c of req)raw+=c;const b=JSON.parse(raw);res.writeHead(200,{'Content-Type':'application/json'});
- if(req.url==='/v1/embeddings'){embeddings++;const input=Array.isArray(b.input)?b.input:[b.input];const data=input.map((text,index)=>{const embedding=Array.from({length:b.dimensions||1024},()=>0);embedding[0]=1;embedding[/公路|高速/.test(text)?1:/河道|航道/.test(text)?2:3]=1;return {object:'embedding',index,embedding};});res.end(JSON.stringify({object:'list',model:b.model,data,usage:{prompt_tokens:10,total_tokens:10}}));}
+ if(['/v1/embeddings','/internal/v1/embeddings'].includes(req.url)){const internal=req.url.startsWith('/internal/');if(internal)dedicatedRequests.push({authorization:req.headers.authorization,model:b.model,dimensions:b.dimensions});else embeddings++;const input=Array.isArray(b.input)?b.input:[b.input];const data=input.map((text,index)=>{const embedding=Array.from({length:internal&&badVector?768:b.dimensions||1024},()=>0);embedding[0]=1;embedding[/公路|高速/.test(text)?1:/河道|航道/.test(text)?2:3]=1;return {object:'embedding',index,embedding};});res.end(JSON.stringify({object:'list',model:b.model,data,usage:{prompt_tokens:10,total_tokens:10}}));}
  else{generations++;const metadata=JSON.parse(b.messages[1].content);assert.ok(metadata.retrievedReferences?.length);res.end(JSON.stringify({model:b.model,choices:[{finish_reason:'stop',message:{content:JSON.stringify({bodyBlocks:['{{projectOverview}}','{{routeSummary}}','{{requestItems}}','请研究后函复有关意见。']})}}],usage:{total_tokens:20}}));}
  }catch(e){res.statusCode=500;res.end(JSON.stringify({error:{message:e.message}}));}});
-async function start(){child=spawn(process.execPath,['server.mjs'],{env:{...process.env,PORT:'4340',TX_DATA_DIR:dir,TX_DATABASE_URL:dbUrl.toString(),TX_USE_DATABASE:'true',LLM_MODEL:'',LLM_API_KEY:''},stdio:['ignore','pipe','pipe']});child.stdout.on('data',d=>logs+=d);child.stderr.on('data',d=>logs+=d);await new Promise((r,j)=>{child.stdout.once('data',r);child.once('error',j);child.once('exit',c=>c&&j(new Error(logs)))});}
+async function start(embeddingEnv={}){child=spawn(process.execPath,['server.mjs'],{env:{...process.env,PORT:'4340',TX_DATA_DIR:dir,TX_DATABASE_URL:dbUrl.toString(),TX_USE_DATABASE:'true',LLM_MODEL:'',LLM_API_KEY:'',EMBEDDING_BASE_URL:'',EMBEDDING_MODEL:'',EMBEDDING_API_KEY:'',...embeddingEnv},stdio:['ignore','pipe','pipe']});child.stdout.on('data',d=>logs+=d);child.stderr.on('data',d=>logs+=d);await new Promise((r,j)=>{child.stdout.once('data',r);child.once('error',j);child.once('exit',c=>c&&j(new Error(logs)))});}
 async function stop(){if(child){const p=child;child=null;await new Promise(r=>{p.once('exit',r);p.kill()});}}
 async function api(p,body,expected=200){const response=await fetch(origin+p,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});const value=await response.json();assert.equal(response.status,expected,JSON.stringify(value));return value;}
 let database;
@@ -65,5 +66,40 @@ try{
  await stop();await start();assert.equal((await api('/api/v1/projects')).records[0].workingCopies.A.input.project.overview,'修改后仍保留的工程概况');assert.equal((await api('/api/v1/tasks/'+task.id,{action:'status'})).result.letters[0].retrieval.status,'used');assert.ok((await api('/api/v1/knowledge')).documents.length>=11);
  await api('/api/v1/projects',{action:'reset',key,expectedRevision:2});assert.equal((await api('/api/v1/projects')).records[0].hidden,true);assert.equal((await api('/api/v1/tasks')).tasks.length,1);
  const records=(await database.query('SELECT payload::text FROM tx_tasks')).rows.map(r=>r.payload).join('');assert.ok(!records.includes('synthetic-rag-key'));
+ const embeddingEnv={EMBEDDING_BASE_URL:'http://127.0.0.1:4341/internal/v1/embeddings',EMBEDDING_MODEL:'bge-m3',EMBEDDING_API_KEY:'synthetic-internal-key'};
+ await stop();await start(embeddingEnv);
+ const knowledgeConfig=(await api('/api/v1/knowledge')).settings;
+ assert.equal(knowledgeConfig.serviceMode,'dedicated');assert.equal(knowledgeConfig.model,'bge-m3');
+ assert.ok(!JSON.stringify(knowledgeConfig).includes('synthetic-internal-key'));
+ assert.equal((await api('/api/v1/model-config')).model,'test-llm');
+ assert.equal((await api('/api/v1/knowledge',{action:'search',query:'线路路径方案征询意见',type:'general'})).status,'empty');
+ const sharedCalls=embeddings;
+ const migrationRepository=await openRepository(dir,dbUrl.toString());
+ const previous=Object.fromEntries(Object.keys(embeddingEnv).map(key=>[key,process.env[key]]));
+ try{
+  Object.assign(process.env,embeddingEnv);
+  const library=await knowledgeStore(migrationRepository,{get:()=>({baseUrl:'http://127.0.0.1:4341/v1',apiKey:'synthetic-rag-key'})});
+  assert.equal(dedicatedRequests.length,0);
+  const plan=await library.rebuildDedicatedIndex();assert.equal(plan.documents,12);assert.equal(dedicatedRequests.length,0);
+  badVector=true;
+  await assert.rejects(library.rebuildDedicatedIndex({apply:true}),/1024 维输出/);
+  assert.equal((await library.rebuildDedicatedIndex()).chunks,plan.chunks);
+  assert.equal(embeddings,sharedCalls);
+  badVector=false;
+  const rebuilt=await library.rebuildDedicatedIndex({apply:true});assert.equal(rebuilt.applied,true);assert.equal(rebuilt.chunks,plan.chunks);
+  assert.equal((await library.rebuildDedicatedIndex()).chunks,0);
+ }finally{
+  for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  await migrationRepository.close();
+ }
+ assert.equal((await api('/api/v1/knowledge',{action:'test'})).dimensions,1024);
+ const afterDedicatedCalls=dedicatedRequests.length;
+ assert.equal((await api('/api/v1/knowledge',{action:'sync-templates'})).documents,9);
+ assert.equal(dedicatedRequests.length,afterDedicatedCalls);
+ const migrated=await api('/api/v1/knowledge',{action:'search',query:'线路路径方案征询意见',type:'general',forDraft:true});
+ assert.equal(migrated.model,'bge-m3');assert.ok(migrated.sources.some(s=>s.document_id===history.id));
+ assert.equal(embeddings,sharedCalls);
+ assert.ok(dedicatedRequests.every(r=>r.authorization==='Bearer synthetic-internal-key'&&r.model==='bge-m3'&&r.dimensions===undefined));
+ assert.equal((await database.query("SELECT count(*)::int AS n FROM tx_chunks c JOIN tx_documents d ON d.id=c.document_id WHERE d.metadata->>'direction'='incoming' AND c.embedding_model LIKE '%|bge-m3'")).rows[0].n,0);
  console.log('PostgreSQL＋pgvector联调通过：JSON备份迁移、工程保存与恢复、并发版本保护、模板向量化去重、工程范围过滤、停用资料过滤、RAG起草和引用记录、数据库重启恢复、重置保留历史。');
 }finally{await stop();await new Promise(r=>mock.close(r));if(database)await database.end();await admin.query('DROP DATABASE "'+name+'" WITH (FORCE)');await admin.end();await fs.rm(dir,{recursive:true,force:true});}

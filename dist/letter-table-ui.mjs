@@ -114,8 +114,19 @@ export function editLetterTable(env, current, apply) {
   let rows = structuredClone(current.agreements);
   env.modal('表格编辑协议清单', '<p>直接修改单元格，也可新增或删除行；点击“保存清单”后生效。</p><div class="actions"><button id="letter-table-add" type="button">＋ 新增一行</button></div><div id="letter-table-grid" class="letter-table-scroll"></div><div id="letter-table-error" class="error-msg" role="alert"></div>', '<button data-action="close">取消</button><button class="primary" id="letter-table-save">保存清单</button>', true);
   const options = (items, value) => items.map(([v,label])=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(label)}</option>`).join('');
+  const choices = {
+    type: LETTER_TEMPLATES.map(t=>[t.id,t.name]),
+    round: [['first','首次'],['repeat','再次征询'],['revised','路径调整后重新征询']],
+    allowAlternatives: [['','否'],['是','是']]
+  };
+  const cell = (a,i,key,label) => {
+    const attrs = `data-row="${i}" data-col="${key}" aria-label="第${i+1}行${label}"`;
+    if(!choices[key])return `<textarea rows="2" ${attrs}>${esc(a[key])}</textarea>`;
+    const value = key==='allowAlternatives'&&a[key]===true?'是':a[key]||'';
+    return `<select ${attrs}>${options(choices[key],value)}</select>`;
+  };
   const paint = () => {
-    $('#letter-table-grid').innerHTML = `<table class="letter-input-table letter-edit-table"><thead><tr>${TABLE_FIELDS.map(([,label])=>`<th>${label}</th>`).join('')}<th>操作</th></tr></thead><tbody>${rows.map((a,i)=>`<tr>${TABLE_FIELDS.map(([key,label])=>`<td>${key==='type'?`<select data-row="${i}" data-col="${key}" aria-label="第${i+1}行${label}">${options(LETTER_TEMPLATES.map(t=>[t.id,t.name]),a.type)}</select>`:key==='round'?`<select data-row="${i}" data-col="${key}" aria-label="第${i+1}行${label}">${options([['first','首次'],['repeat','再次征询'],['revised','路径调整后重新征询']],a.round)}</select>`:`<textarea rows="2" data-row="${i}" data-col="${key}" aria-label="第${i+1}行${label}">${esc(a[key])}</textarea>`}</td>`).join('')}<td><button type="button" data-delete-row="${i}">删除</button></td></tr>`).join('')}</tbody></table>`;
+    $('#letter-table-grid').innerHTML = `<table class="letter-input-table letter-edit-table"><thead><tr>${TABLE_FIELDS.map(([,label])=>`<th>${label}</th>`).join('')}<th>操作</th></tr></thead><tbody>${rows.map((a,i)=>`<tr>${TABLE_FIELDS.map(([key,label])=>`<td>${cell(a,i,key,label)}</td>`).join('')}<td><button type="button" data-delete-row="${i}">删除</button></td></tr>`).join('')}</tbody></table>`;
     $('#letter-table-grid').oninput=e=>{if(e.target.dataset.col)rows[+e.target.dataset.row][e.target.dataset.col]=e.target.value;};
     $('#letter-table-grid').onchange=e=>{if(e.target.dataset.col)rows[+e.target.dataset.row][e.target.dataset.col]=e.target.value;};
     $('#letter-table-grid').onclick=e=>{const b=e.target.closest('[data-delete-row]');if(b){rows.splice(+b.dataset.deleteRow,1);paint();}};

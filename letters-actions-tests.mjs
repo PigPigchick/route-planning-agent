@@ -7,8 +7,9 @@ import {createLettersTask} from './backend/letters-agent.mjs';
 import {renderLetters,handleLetters,preserveLettersMenu,searchLetterAgreements} from './dist/letters-ui.mjs';
 import {emptyWorkspace} from './dist/workspace-state.mjs';
 
-function fixture({stale=false,count=1,generatedIds=null,initialSelected=null,withoutTask=false}={}){
+function fixture({stale=false,count=1,generatedIds=null,initialSelected=null,withoutTask=false,isDemo=false}={}){
  const context=structuredClone(SAMPLE);context.project.id='UI-'+crypto.randomUUID();
+ if(isDemo)context.project.isDemo=true;
  const input=createLettersInput(context,context.routes[0]);input.agreements=input.agreements.slice(0,count);input.templateConfirmed=true;
  Object.assign(input.project,{issuer:'测试单位',contactName:'测试人员',contactPhone:'测试电话',replyAddress:'测试地址'});
  const task=createLettersTask(context,{contextId:'ctx',routeIds:['A'],options:{mode:'template',lettersInput:structuredClone(input),...(generatedIds?{agreementIds:generatedIds}:{})}},{});
@@ -25,6 +26,15 @@ function fixture({stale=false,count=1,generatedIds=null,initialSelected=null,wit
 
 const reorderJson=value=>Array.isArray(value)?value.map(reorderJson):value&&typeof value==='object'
  ?Object.fromEntries(Object.keys(value).reverse().map(key=>[key,reorderJson(value[key])])):value;
+
+test('演示工程新草稿和旧草稿均不展示已移除的提示，仍展示其他提示',()=>{
+ const f=fixture({isDemo:true}),l=f.task.result.letters[0],legacy='当前工程为演示数据，正文及参数仅供演示。';
+ assert.ok(!l.warnings.includes(legacy));
+ l.warnings.push(legacy,'请核对附件版本。');
+ f.env.render();
+ assert.ok(!f.html.includes(legacy));
+ assert.match(f.html,/请核对附件版本/);
+});
 
 test('数据库返回的对象字段顺序变化不会提示同步，真实资料变化仍会提示',()=>{
  const f=fixture(),stored=JSON.parse(f.storage.get(f.key));
@@ -43,6 +53,7 @@ test('JSONB字段重排后同步同一资料保留正文与人工复核，真正
  const task=createLettersTask(SAMPLE,{contextId:'ctx',routeIds:['A'],options:{mode:'template',lettersInput:input}},assets);
  reviewLetter(task,{action:'confirm',letterId:task.result.letters[0].id,expectedRevision:1,reviewer:'测试复核员',note:'测试事实与附件已核对'});
  const revision=task.revision,letterRevision=task.result.letters[0].revision;
+ task.result.letters[0].warnings.push('当前工程为演示数据，正文及参数仅供演示。');
  task.input=reorderJson(task.input);task.result=reorderJson(task.result);
  updateLettersInput(task,{expectedRevision:revision,lettersInput:structuredClone(input)},assets);
  assert.equal(task.revision,revision);assert.equal(task.result.letters[0].revision,letterRevision);

@@ -3,7 +3,8 @@ import {LETTER_TEMPLATES, validateLettersInput} from './letters-core.mjs';
 export const TABLE_FIELDS = [
   ['id', '协议编号'], ['scope', '行政区域 / 区段'], ['unit', '部门 / 收函单位'],
   ['type', '函件类型'], ['points', '征询事项'], ['round', '征询轮次'], ['status', '完成情况'],
-  ['previousLetter', '前次函件与意见'], ['changeSummary', '路径调整原因']
+  ['previousLetter', '前次函件与意见'], ['changeSummary', '路径调整原因'],
+  ['allowAlternatives', '允许多方案比较']
 ];
 const typeIds = new Map(LETTER_TEMPLATES.flatMap(t => [[t.id, t.id], [t.name, t.id]]));
 const rounds = new Map([['first', 'first'], ['首次', 'first'], ['repeat', 'repeat'], ['再次征询', 'repeat'], ['再次', 'repeat'], ['revised', 'revised'], ['重新征询', 'revised'], ['路径调整后重新征询', 'revised']]);
@@ -12,7 +13,8 @@ const aliases = {
   id: ['协议编号', '编号', '事项编号'], unit: ['部门', '单位', '协议单位', '收函单位', '收函单位正式全称', '部门/收函单位'],
   scope: ['行政区域', '行政区域/区段', '行政区段', '行政区划', '区段'], type: ['函件类型', '协议类型', '类型'],
   points: ['征询事项', '事项', '征询要点'], round: ['征询轮次', '轮次'], status: ['完成情况', '协议完成情况', '协议办理情况'],
-  previousLetter: ['前次函件与意见', '前次函件'], changeSummary: ['路径调整原因', '本次路径调整原因'], replySummary: ['回函关键内容', '回复意见']
+  previousLetter: ['前次函件与意见', '前次函件'], changeSummary: ['路径调整原因', '本次路径调整原因'],
+  allowAlternatives: ['允许多方案比较'], replySummary: ['回函关键内容', '回复意见']
 };
 const header = s => clean(s).replace(/[\s·]/g, '');
 export function parseTableText(text) {
@@ -46,10 +48,16 @@ export function agreementsFromRows(rows, existing = []) {
     if (!type) throw new Error(`第${i+2}行函件类型无效：${get('type')}`);
     const round = rounds.get(get('round') || 'first');
     if (!round) throw new Error(`第${i+2}行征询轮次无效：${get('round')}`);
+    const comparison = get('allowAlternatives');
+    if (!['', '是', '否', 'true', 'false'].includes(comparison)) throw new Error(`第${i+2}行“允许多方案比较”请填写是或否`);
+    const allowAlternatives = comparison === '是' || comparison === 'true';
+    if (allowAlternatives && round !== 'revised') throw new Error(`第${i+2}行仅路径调整后重新征询可确认多方案比较`);
     const old = existing.find(a => a.id === id);
     const a = {...(old ? structuredClone(old) : {facts: {}, attachments: []}), id, unit, type, round,
       scope: get('scope'), points: get('points'), status: get('status') || '未发函',
       previousLetter: get('previousLetter'), changeSummary: get('changeSummary'), replySummary: cols.replySummary<0?(old?.replySummary||''):get('replySummary')};
+    if (allowAlternatives) a.allowAlternatives = true;
+    else delete a.allowAlternatives;
     if (old && old.type !== type) { a.facts = {}; delete a.crossings; delete a.templateId; }
     if (!a.scope || !a.points) warnings.push(`第${i+2}行 ${unit}：${[!a.scope && '区段', !a.points && '征询事项'].filter(Boolean).join('、')}待补充`);
     if (['高速', '铁路', '航道', '军事设施保护区', '其他收资'].includes(unit)) warnings.push(`第${i+2}行“${unit}”是类别或对象，请补充正式收函单位`);

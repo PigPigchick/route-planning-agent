@@ -2,11 +2,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn, spawnSync} from 'node:child_process';
+import {parseEnv} from 'node:util';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const state = path.join(root, '.local-data');
 const address = 'http://127.0.0.1:5173/#letters';
 const statusOnly = process.argv.includes('--status');
+const ollama = path.join(state, 'ollama');
+const ollamaPort = 11434;
 const services = [
   {name: '后端', port: 4318, file: 'server.mjs', log: 'backend-launcher.log'},
   {name: '前端', port: 5173, file: 'frontend.mjs', log: 'frontend-launcher.log'}
@@ -15,8 +18,12 @@ const services = [
 async function healthy(service) {
   try {
     const response = await fetch(`http://127.0.0.1:${service.port}/` +
-      (service.port === 4318 ? 'api/v1/storage' : ''), {signal: AbortSignal.timeout(2000)});
+      (service.checkPath || (service.port === 4318 ? 'api/v1/storage' : '')), {signal: AbortSignal.timeout(2000)});
     if (!response.ok) return false;
+    if (service.embeddingModel) {
+      const value = await response.json();
+      return value.models.some(model => model.name === service.embeddingModel || model.name === service.embeddingModel + ':latest');
+    }
     if (service.port === 4318) {
       const value = await response.json();
       return value.engine === 'postgresql' && value.connected && value.vector;
@@ -39,6 +46,32 @@ function listenerRoot(port) {
 try {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('需要 Node.js 22 或更高版本。');
   await fs.mkdir(state, {recursive: true});
+  const envFile = await fs.readFile(path.join(root, '.env.local'), 'utf8').catch(error => {
+    if (error.code !== 'ENOENT') throw error;
+    return '';
+  });
+  const localEnv = parseEnv(envFile);
+  const embeddingBase = (process.env.EMBEDDING_BASE_URL ?? localEnv.EMBEDDING_BASE_URL ?? '').trim().replace(/\/+$/, '');
+  const ollamaBinary = path.join(ollama, 'runtime', 'ollama');
+  if (embeddingBase === `http://127.0.0.1:${ollamaPort}/v1` && await fs.stat(ollamaBinary).then(info => info.isFile(), () => false)) {
+    services.unshift({
+      name: '本机向量服务',
+      port: ollamaPort,
+      executable: ollamaBinary,
+      args: ['serve'],
+      embeddingModel: (process.env.EMBEDDING_MODEL ?? localEnv.EMBEDDING_MODEL ?? '').trim() || 'bge-m3',
+      checkPath: 'api/tags',
+      log: 'embedding-launcher.log',
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        TMPDIR: process.env.TMPDIR,
+        OLLAMA_HOST: `127.0.0.1:${ollamaPort}`,
+        OLLAMA_MODELS: path.join(ollama, 'models'),
+        OLLAMA_NO_CLOUD: '1'
+      }
+    });
+  }
   for (const service of services) {
     const owners = listenerRoot(service.port);
     if (owners.some(owner => owner !== root)) throw new Error(`${service.port} 端口由其他项目占用，请先检查该程序。`);
@@ -51,8 +84,8 @@ try {
     const logPath = path.join(state, service.log);
     const log = await fs.open(logPath, 'a', 0o600);
     try {
-      const child = spawn(process.execPath, [path.join(root, service.file)], {
-        cwd: root, env: {...process.env, PORT: '4318', FRONTEND_PORT: '5173'},
+      const child = spawn(service.executable || process.execPath, service.args || [path.join(root, service.file)], {
+        cwd: root, env: service.env || {...process.env, PORT: '4318', FRONTEND_PORT: '5173'},
         detached: true, stdio: ['ignore', log.fd, log.fd]
       });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });

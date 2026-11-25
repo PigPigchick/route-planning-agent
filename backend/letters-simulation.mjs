@@ -8,7 +8,7 @@ const numeric=new Set(['angleDeg','spanLengthM','horizontalDistanceM','clearance
 export function simulationFields(input,ids,templateCatalog){
  const fields=new Map();
  for(const l of planLetters(input,{agreementIds:ids,templateCatalog},{}))for(const m of l.missingFields){
-  if(m.field.startsWith('attachments.')||['templateConfirmed','route.version'].includes(m.field))continue;
+  if(/^(attachments|publication)\./.test(m.field)||['templateConfirmed','route.version'].includes(m.field))continue;
   const common=/^(project|route)\./.test(m.field),a=input.agreements.find(a=>l.agreementIds.includes(a.id));
   const key=common?m.field:'agreements.'+a.id+'.'+m.field;
   if(!fields.has(key))fields.set(key,{key,label:m.label,agreementId:common?null:a.id,field:m.field,type:numeric.has(m.field.split('.').at(-1))?'number':'string'});

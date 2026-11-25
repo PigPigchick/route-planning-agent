@@ -15,3 +15,26 @@ export function vectorLiteral(vector,dimensions){
  return '['+vector.join(',')+']';
 }
 export function knowledgeQuery(letter){return [letter.typeLabel,letter.templateRef?.name,letter.tokens?.requestItems].filter(Boolean).join('\n').slice(0,3000);}
+
+// Keep these patterns portable between JavaScript and PostgreSQL ARE. Read the whole
+// archived letter before retrieval: an innocuous fragment can belong to a comparison letter.
+const planNumber='[一二三四五六七八九十甲乙丙丁0-9A-DＡ-Ｄ０-９]';
+const labelStart=String.raw`(?:^|[\s、，,。；;：:（）()《》【】“”"/]|采用|选用|使用|选择|选定|推荐|确定|以|为|按|及|和|与|由)`;
+const labelEnd=String.raw`(?=$|[\s、，,。；;：:（）()《》【】“”"/]|路径|线路|线位|走向|的|与|和|及|为|较|需|均|由|在|经|自|起|止|长)`;
+export const comparisonReferencePattern=[
+ '推荐(?:的)?(?:线路|路径|线位)?方案',
+ '优化(?:设计|路径|线路|调整|后的?){0,2}方案',
+ '(?:备选|候选|择优|优选|最优|不同|各个|各备选)(?:的)?(?:路径|线路|线位)?方案',
+ '(?:若干|多个?|[两二三四五六七八九十2-9２-９][个套种]?)(?:可选|备选|候选|路径|线路|线位|走廊|的){0,4}方案',
+ '(?:多(?:方案|路由|路径)|方案|路径|线位|线路)(?:比选|比较|对比|优选|择优)',
+ '(?:比选|比较|对比)(?:各|若干|多个)?(?:路径|线路|线位)?方案',
+ '方案\\s*'+planNumber+'+'+labelEnd,
+ '第[一二三四五六七八九十0-9０-９]+(?:个|套|号)?\\s*方案',
+ labelStart+'(?:[中东西南北](?:线|侧)?|'+planNumber+'+号?)\\s*方案'+labelEnd,
+ '(?:再次|重新|二次|第二次)(?:征询|征求|征求意见)',
+ '优化调整',
+ '(?:线路|线位|路径|走廊)(?:方案)?调整(?:前|后)',
+ '调整(?:前|后)(?:的)?(?:线路|线位|路径|走廊|方案)',
+].join('|');
+// Some older samples only identify the revised stage in their parent directory.
+export const comparisonSourcePattern=String.raw`调整[前后](?:[/\\／"\s]|$)`;

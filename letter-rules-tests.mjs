@@ -56,7 +56,7 @@ test('模拟补全按跨越行白名单填入数字，保持原资料且不覆�
 });
 test('结构校验失败仅自动修正一次，二次失败不输出；鉴权失败不重试',async()=>{
  const original=globalThis.fetch;try{
-  for(const mode of ['repair','invalid','auth']){let calls=0;const t=task();globalThis.fetch=async()=>{calls++;return mode==='auth'?new Response('{}',{status:401}):response(calls===1||mode==='invalid'?['{{projectOverview}}','{{routeSummary}}','现就{{requestItems}}。']:['{{projectOverview}}','{{routeSummary}}','{{requestItems}}']);};await generateLetters(t,{model:'mock',apiKey:'synthetic',baseUrl:'http://mock'},async()=>{});const l=t.result.letters[0];assert.equal(calls,mode==='auth'?1:2);if(mode==='repair'){assert.equal(l.generation.promptVersion,'letters-paragraphs-v2');assert.deepEqual(l.generation.attempts.map(a=>a.passed),[false,true]);assert.ok(l.bodyBlocks.length);}else{assert.equal(l.status,'failed');assert.deepEqual(l.bodyBlocks,[]);assert.match(l.error,mode==='auth'?/鉴权失败/:/独立成段/);}}
+  for(const mode of ['repair','invalid','auth']){let calls=0;const t=task();globalThis.fetch=async()=>{calls++;return mode==='auth'?new Response('{}',{status:401}):response(calls===1||mode==='invalid'?['{{projectOverview}}','{{routeSummary}}','现就{{requestItems}}。']:['{{projectOverview}}','{{routeSummary}}','{{requestItems}}']);};await generateLetters(t,{model:'mock',apiKey:'synthetic',baseUrl:'http://mock'},async()=>{});const l=t.result.letters[0];assert.equal(calls,mode==='auth'?1:2);if(mode==='repair'){assert.equal(l.generation.promptVersion,'letters-paragraphs-v3');assert.deepEqual(l.generation.attempts.map(a=>a.passed),[false,true]);assert.ok(l.bodyBlocks.length);}else{assert.equal(l.status,'failed');assert.deepEqual(l.bodyBlocks,[]);assert.match(l.error,mode==='auth'?/鉴权失败/:/独立成段/);}}
  }finally{globalThis.fetch=original;}
 });
 
