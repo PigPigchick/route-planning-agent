@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
+import {Readable} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 import {validateContext,makeTask,confirmTask} from './dist/engine.mjs';
 import {reviewLetter,createLettersInput,updateLettersInput,letterReadyStatus,refreshSummary,LETTER_TEMPLATES,resolveLetterTemplate,assertLetterPublicationWording} from './dist/letters-core.mjs';
 import {findAlternativeWording} from './dist/letter-scenario.mjs';
@@ -20,7 +22,9 @@ import {openRepository,databaseStatus} from './backend/database.mjs';
 import {projectStore} from './backend/project-store.mjs';
 import {knowledgeStore} from './backend/knowledge.mjs';
 import {ensureLocalPostgres} from './backend/local-postgres.mjs';
+import {rraAdapter} from './backend/rra-adapter.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));await loadLocalEnv(root);
+const rra=rraAdapter(process.env.TX_RRA_BASE_URL||(process.env.TX_RRA_PROJECTS?'http://127.0.0.1:5010':''));
 await ensureLocalPostgres(root);
 const stateDir=process.env.TX_DATA_DIR||path.join(root,'.local-data'),port=Number(process.env.PORT||4318);
 await fs.mkdir(stateDir,{recursive:true});await fs.mkdir(path.join(stateDir,'assets'),{recursive:true});await fs.mkdir(path.join(stateDir,'exports'),{recursive:true});
@@ -33,6 +37,23 @@ const upgradedResources=upgradeLetterResources(db.letterResources),resourcesUpgr
 for(const task of Object.values(db.tasks))if(task.status==='running'&&['letters-v2','design-v2'].includes(task.schemaVersion)){task.status='failed';task.error='服务曾中断，请重新起草';task.finishedAt=new Date().toISOString();if(task.schemaVersion==='letters-v2'){for(const l of task.result.letters)if(['pending','generating','checking'].includes(l.status)){l.status='failed';l.error=task.error;l.text=task.error;l.live={...l.live,phase:'failed'};l.finishedAt=task.finishedAt}}else{task.result.text=task.error;for(const c of task.result.chapters||[])c.text=task.error;}}
 for(const task of Object.values(db.tasks))if(task.schemaVersion==='letters-v2'){for(const letter of task.result.letters)if(letter.status==='draft')letter.status=letterReadyStatus(letter);refreshSummary(task);}
 let writes=Promise.resolve();function save(){const snapshot=structuredClone(db);writes=writes.catch(()=>{}).then(()=>repository.save(snapshot));return writes}
+const rraRefreshes=new Map();
+async function refreshRra(task){
+ if(task.status!=='running')return task;
+ if(!rraRefreshes.has(task.id)){
+  const refresh=(async()=>{
+   const next=structuredClone(task);
+   await rra.refresh(next);
+   if(JSON.stringify(next)===JSON.stringify(task))return task;
+   if(next.status!=='running')next.finishedAt=new Date().toISOString();
+   db.tasks[task.id]=next;
+   try{await save();}catch(error){db.tasks[task.id]=task;throw error;}
+   return next;
+  })().finally(()=>rraRefreshes.delete(task.id));
+  rraRefreshes.set(task.id,refresh);
+ }
+ return rraRefreshes.get(task.id);
+}
 if(resourcesUpgraded||!repository.initial.letterResources)await save();
 const allowed=new Set((process.env.TX_ALLOWED_ORIGINS||'http://127.0.0.1:5173,http://localhost:5173').split(',').filter(Boolean));
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))}
@@ -97,11 +118,11 @@ const server=http.createServer(async(req,res)=>{try{
  if(origin&&!allowed.has(origin)&&origin!==`http://${host}`){json(res,403,{error:{code:'ORIGIN_DENIED',message:'来源未加入 TX_ALLOWED_ORIGINS'}});return}
  if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type')}
  if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
- const p=new URL(req.url,'http://localhost').pathname;
+ const url=new URL(req.url,'http://localhost'),p=url.pathname;
  if(req.method==='GET'&&p==='/api/v1/storage'){json(res,200,await databaseStatus(repository));return}
  if(req.method==='GET'&&p==='/api/v1/projects'){json(res,200,{engine:repository.engine,records:projects?await projects.list():[]});return}
  if(req.method==='GET'&&p==='/api/v1/tasks'){
-  const query=new URL(req.url,'http://localhost').searchParams,id=query.get('projectId'),version=query.get('version');
+  const id=url.searchParams.get('projectId'),version=url.searchParams.get('version');
   json(res,200,{tasks:Object.values(db.tasks).filter(t=>(!id||t.projectId===id)&&(!version||t.projectVersion===version)).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))});return;
  }
  if(req.method==='GET'&&p==='/api/v1/knowledge'){json(res,200,{settings:knowledge.settings(),documents:repository.pool?await knowledge.list():[]});return}
@@ -109,6 +130,60 @@ const server=http.createServer(async(req,res)=>{try{
  if(req.method==='GET'&&knowledgeOriginal){const f=await knowledge.original(knowledgeOriginal[1]);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,'Cache-Control':'no-store'});res.end(f.content);return}
  if(req.method==='GET'&&p==='/api/v1/letter-resources'){json(res,200,db.letterResources);return}
  if(req.method==='GET'&&p==='/api/v1/model-config'){json(res,200,model.publicView());return}
+ const rraDocument=p.match(/^\/api\/v1\/tasks\/([A-Za-z0-9-]+)\/rra-document\/(description|comparison|upper|lower|assembly)\/(read|image|docx|pdf|save|suggest)$/);
+ if(rraDocument){
+  const [,id,kind,action]=rraDocument,task=db.tasks[id];
+  if(task?.schemaVersion!=='rra-v1'){json(res,404,{error:{message:'报告任务不存在'}});return}
+  const writing=action==='save'||action==='suggest';
+  if(req.method!==(writing?'POST':'GET')||(kind==='assembly'&&!['read','image'].includes(action))){
+   json(res,405,{error:{message:'此操作不适用于当前报告'}});return;
+  }
+  let payload;
+  if(writing){
+   if(!req.headers['content-type']?.startsWith('application/json'))throw new Error('请使用 application/json');
+   const draft=await body(req);
+   if(typeof draft?.id!=='string'||!/^\d{1,10}$/.test(draft.id)||typeof draft.source!=='string'||!/^[0-9a-f]{64}$/.test(draft.source)
+    ||!Number.isSafeInteger(draft.version)||draft.version<0||typeof draft.text!=='string'||!draft.text.trim()||draft.text.length>16000)
+    throw new Error('段落、来源版本或正文无效');
+   payload={id:draft.id,source:draft.source,version:draft.version,text:draft.text};
+   if(action==='suggest'){
+    if(typeof draft.instruction!=='string'||!draft.instruction.trim()||draft.instruction.length>1500)throw new Error('请输入修改要求（最多1500字）');
+    payload.instruction=draft.instruction;
+   }
+  }
+  const response=await rra.document(task,kind,action,{image:url.searchParams.get('name'),payload});
+  if(['read','save','suggest'].includes(action)||!response.ok){
+   const value=await response.json().catch(()=>null);
+   if(!response.ok||!value){
+    const message=typeof value?.error==='string'?value.error:response.status===404?'报告文档或图件不存在':'RRA 未返回有效的报告响应';
+    json(res,response.ok?502:response.status,{error:{message}});return;
+   }
+   json(res,200,value);return;
+  }
+  const type=action==='image'?response.headers.get('content-type')?.split(';')[0]
+   :action==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if(!response.body||(action==='image'&&!['image/png','image/jpeg'].includes(type))){
+   json(res,502,{error:{message:'RRA 返回了无法显示的图件或文档'}});return;
+  }
+  res.writeHead(200,{'Content-Type':type,
+   ...(action==='image'?{}:{'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent('审校版_'+kind+'.'+action)}`}),
+   'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+  await pipeline(Readable.fromWeb(response.body),res);return;
+ }
+ const rraFile=p.match(/^\/api\/v1\/tasks\/([A-Za-z0-9-]+)\/rra-files\/(\d+)$/);
+ if(req.method==='GET'&&rraFile){
+  const task=db.tasks[rraFile[1]];
+  if(task?.schemaVersion!=='rra-v1'||!task.result.files?.[Number(rraFile[2])]){
+   json(res,404,{error:{message:'报告文件不存在'}});return;
+  }
+  const {file,response}=await rra.download(task,Number(rraFile[2]));
+  const filename=encodeURIComponent(file.name).replace(/['()*]/g,c=>'%'+c.charCodeAt(0).toString(16));
+  res.writeHead(200,{
+   'Content-Type':file.name.toLowerCase().endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+   'Content-Disposition':`attachment; filename*=UTF-8''${filename}`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'
+  });
+  await pipeline(Readable.fromWeb(response.body),res);return;
+ }
  const fileMatch=p.match(/^\/api\/v1\/files\/([A-Za-z0-9-]+)$/);
  if(req.method==='GET'&&fileMatch){const f=db.files[fileMatch[1]];if(!f){json(res,404,{error:{message:'导出文件不存在'}});return}const content=await fs.readFile(f.path);res.writeHead(200,{'Content-Type':f.name.endsWith('.zip')?'application/zip':f.name.endsWith('.xlsx')?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,'Cache-Control':'no-store'});res.end(content);return}
  if(req.method!=='POST'){json(res,404,{error:{message:'这是后端服务，请在 http://127.0.0.1:5173 打开前端'}});return}
@@ -144,6 +219,12 @@ const server=http.createServer(async(req,res)=>{try{
  if(p==='/api/v1/tasks'){
   const ctx=db.contexts[b.contextId];if(!ctx)throw new Error('工程上下文不存在');
   if(ctx.context.contextType==='letters'&&b.agentType!=='letters')throw new Error('当前工程仅包含征询函资料，请先导入对应智能体所需的路径与空间参数');
+  if(b.options?.engine==='rra'){
+   const task=await rra.submit(ctx.context,b);
+   db.tasks[task.id]=task;
+   try{await save();}catch(error){delete db.tasks[task.id];await rra.cancel(task).catch(()=>{});throw error;}
+   json(res,201,task);return;
+  }
   const simulation=b.agentType==='letters'&&b.options?.simulation===true;
   const snapshot=model.get(),mode=simulation?'llm':b.options?.mode||((snapshot.apiKey||snapshot.model)?'llm':'template');
   if(!['llm','template'].includes(mode))throw new Error('生成模式须为 llm 或 template');
@@ -164,7 +245,9 @@ const server=http.createServer(async(req,res)=>{try{
   }
   return;
  }
- const match=p.match(/^\/api\/v1\/tasks\/([A-Za-z0-9-]+)$/);if(match){const task=db.tasks[match[1]];if(!task)throw new Error('任务不存在');if(b.action==='status'){json(res,200,task);return}
+ const match=p.match(/^\/api\/v1\/tasks\/([A-Za-z0-9-]+)$/);if(match){const task=db.tasks[match[1]];if(!task)throw new Error('任务不存在');
+  if(b.action==='status'){json(res,200,task.schemaVersion==='rra-v1'?await refreshRra(task):task);return}
+  if(task.schemaVersion==='rra-v1')throw new Error('请下载报告核对 RRA 审阅事项');
   if(task.schemaVersion==='letters-v2'){
    if(b.action==='export'&&b.format==='materials-docx'){json(res,200,await exportMaterialsChecklist(task,b));return}
    if(task.status==='running')throw new Error('任务仍在生成，请稍后操作');

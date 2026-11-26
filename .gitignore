@@ -16,3 +16,5 @@ analysis/
 .github-auth/
 .tools/
 database.env
+services/rra/runtime/
+services/rra/.install-*/

@@ -3,6 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn, spawnSync} from 'node:child_process';
 import {parseEnv} from 'node:util';
+import {findRraRuntime} from '../backend/rra-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const state = path.join(root, '.local-data');
@@ -20,6 +21,10 @@ async function healthy(service) {
     const response = await fetch(`http://127.0.0.1:${service.port}/` +
       (service.checkPath || (service.port === 4318 ? 'api/v1/storage' : '')), {signal: AbortSignal.timeout(2000)});
     if (!response.ok) return false;
+    if (service.rra) {
+      const value = await response.json();
+      return value.status === 'ok' && value.studio === true;
+    }
     if (service.embeddingModel) {
       const value = await response.json();
       return value.models.some(model => model.name === service.embeddingModel || model.name === service.embeddingModel + ':latest');
@@ -51,6 +56,25 @@ try {
     return '';
   });
   const localEnv = parseEnv(envFile);
+  const rraRegistry = (process.env.TX_RRA_PROJECTS ?? localEnv.TX_RRA_PROJECTS ?? '').trim();
+  if (rraRegistry) {
+    const rraRoot = await findRraRuntime(root);
+    if (!rraRoot) throw new Error('已配置 RRA，请先运行 npm run setup:rra 安装报告服务。');
+    const base = new URL(process.env.TX_RRA_BASE_URL || localEnv.TX_RRA_BASE_URL || 'http://127.0.0.1:5010');
+    if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1' || !base.port || base.pathname !== '/'
+      || base.username || base.password || base.search || base.hash) throw new Error('托管 RRA 需要 127.0.0.1 上带端口的 HTTP 地址。');
+    const python = process.env.TX_RRA_PYTHON || localEnv.TX_RRA_PYTHON || path.join(rraRoot, '.venv', 'bin', 'python');
+    await fs.access(path.resolve(root, rraRegistry));
+    services.unshift({
+      name: 'RRA 报告服务', rra: true, cwd: rraRoot, port: Number(base.port), checkPath: 'api/health',
+      executable: python.includes('/') ? path.resolve(root, python) : python, log: 'rra-launcher.log',
+      args: ['-m', 'road_description.service', '--config', path.join(rraRoot, 'configs', 'config.dapu-kml.example.json'),
+        '--jobs', path.join(state, 'rra', 'jobs'), '--port', base.port, '--studio-projects', path.resolve(root, rraRegistry)],
+      env: {...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('ROAD_'))),
+        PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, MPLBACKEND: 'Agg',
+        PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1'}
+    });
+  }
   const embeddingBase = (process.env.EMBEDDING_BASE_URL ?? localEnv.EMBEDDING_BASE_URL ?? '').trim().replace(/\/+$/, '');
   const ollamaBinary = path.join(ollama, 'runtime', 'ollama');
   if (embeddingBase === `http://127.0.0.1:${ollamaPort}/v1` && await fs.stat(ollamaBinary).then(info => info.isFile(), () => false)) {
@@ -73,8 +97,9 @@ try {
     });
   }
   for (const service of services) {
+    const cwd = service.cwd || root;
     const owners = listenerRoot(service.port);
-    if (owners.some(owner => owner !== root)) throw new Error(`${service.port} 端口由其他项目占用，请先检查该程序。`);
+    if (owners.some(owner => owner !== cwd)) throw new Error(`${service.port} 端口由其他项目占用，请先检查该程序。`);
     if (await healthy(service)) {
       console.log(`${service.name}：运行正常（${service.port}）`);
       continue;
@@ -85,7 +110,7 @@ try {
     const log = await fs.open(logPath, 'a', 0o600);
     try {
       const child = spawn(service.executable || process.execPath, service.args || [path.join(root, service.file)], {
-        cwd: root, env: service.env || {...process.env, PORT: '4318', FRONTEND_PORT: '5173'},
+        cwd, env: service.env || {...process.env, PORT: '4318', FRONTEND_PORT: '5173'},
         detached: true, stdio: ['ignore', log.fd, log.fd]
       });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });

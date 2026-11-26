@@ -1,0 +1,194 @@
+diff --git a/road_description/figures.py b/road_description/figures.py
+--- a/road_description/figures.py
++++ b/road_description/figures.py
+@@ -2,0 +3 @@
++import os
+@@ -19,4 +20,7 @@
+-FONT='/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc'
+-if Path(FONT).exists():
+-    font_manager.fontManager.addfont(FONT)
+-    plt.rcParams['font.family']=font_manager.FontProperties(fname=FONT).get_name()
++font_paths = (os.getenv('ROAD_REPORT_FONT'), '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
++              '/System/Library/Fonts/STHeiti Medium.ttc')
++for font in font_paths:
++    if font and Path(font).is_file():
++        font_manager.fontManager.addfont(font)
++        plt.rcParams['font.family'] = font_manager.FontProperties(fname=font).get_name()
++        break
+diff --git a/road_description/pipeline.py b/road_description/pipeline.py
+--- a/road_description/pipeline.py
++++ b/road_description/pipeline.py
+@@ -143 +143 @@
+-               '依据所提供的南北方案KML及大埔工程GIS底图生成。' if config.get('route_source')=='kml' else '该文档使用真实规划接口响应及底层地物资料生成。模型实际调用模式和现场素材缺口分别见下方及validation.json。',
++               '依据所提供的南北方案KML及当前工程GIS底图生成。' if config.get('route_source')=='kml' else '该文档使用真实规划接口响应及底层地物资料生成。模型实际调用模式和现场素材缺口分别见下方及validation.json。',
+diff --git a/road_description/service.py b/road_description/service.py
+--- a/road_description/service.py
++++ b/road_description/service.py
+@@ -47 +47 @@
+-    def __init__(self,config_path,root):
++    def __init__(self,config_path,root,studio_projects=None):
+@@ -50,0 +51,9 @@
++        self.studio_projects={}
++        if studio_projects:
++            registry=Path(studio_projects).resolve()
++            for item in read_json(registry)['projects']:
++                key=(item['projectId'],item['projectVersion'])
++                if any(not isinstance(value,str) or not value.strip() for value in key) or key in self.studio_projects:
++                    raise ValueError('RRA 工程配置的工程编号或版本无效，或出现重复')
++                config_file=(registry.parent/item['config']).resolve()
++                self.studio_projects[key]=absolute_config(read_json(config_file),config_root(config_file))
+@@ -54,0 +64,6 @@
++
++    def studio_config(self, project_id, version):
++        try:
++            return self.studio_projects[(project_id,version)]
++        except KeyError:
++            raise ValueError('RRA 尚未配置此工程版本的 GIS 数据和地图快照') from None
+@@ -148 +163 @@
+-def create_app(config_path,job_root):
++def create_app(config_path,job_root,studio_projects=None):
+@@ -152 +167 @@
+-    manager=JobManager(config_path,job_root);app.extensions['reports']=manager
++    manager=JobManager(config_path,job_root,studio_projects);app.extensions['reports']=manager
+@@ -168 +183 @@
+-        return jsonify(status='ok', job_workers=1, model_concurrency=15,
++        return jsonify(status='ok', studio=bool(manager.studio_projects), job_workers=1, model_concurrency=15,
+@@ -196,0 +212 @@
++    parser.add_argument('--studio-projects',help='输电工作台的工程版本配置清单')
+@@ -198 +214 @@
+-    if args.workbench:
++    if args.workbench or args.studio_projects:
+@@ -203 +219 @@
+-            server.app = create_app(args.config,args.jobs)
++            server.app = create_app(args.config,args.jobs,args.studio_projects)
+@@ -205 +221,2 @@
+-            print(f'http://127.0.0.1:{server.server_port}/workbench/#description',flush=True)
++            suffix = '/workbench/#description' if args.workbench else '/api/health'
++            print(f'http://127.0.0.1:{server.server_port}{suffix}',flush=True)
+@@ -208 +225 @@
+-        create_app(args.config,args.jobs).run(host='127.0.0.1',port=args.port,threaded=True)
++        create_app(args.config,args.jobs,args.studio_projects).run(host='127.0.0.1',port=args.port,threaded=True)
+diff --git a/road_description/workbench_api.py b/road_description/workbench_api.py
+--- a/road_description/workbench_api.py
++++ b/road_description/workbench_api.py
+@@ -21 +21,9 @@
+-    config = copy.deepcopy(manager.base)
++    project_id=request.form.get('projectId')
++    version=request.form.get('projectVersion')
++    studio_project=None
++    if project_id is not None or version is not None:
++        if not project_id or not version:
++            raise ValueError('请同时提交工程编号与版本')
++        studio_project={'id':project_id,'version':version}
++    base=manager.studio_config(project_id,version) if studio_project else manager.base
++    config = copy.deepcopy(base)
+@@ -22,0 +31,2 @@
++    if studio_project and (not (seed/'map.json').is_file() or not (seed/'map.raw.json.gz').is_file()):
++        raise ValueError('当前工程版本缺少 GIS 地图快照文件')
+@@ -32 +42 @@
+-        identical = manager.base.get('route_source') == 'kml'
++        identical = base.get('route_source') == 'kml'
+@@ -54 +64 @@
+-            routes.append(dict(id=sid,path=list(route.coords)))
++            routes.append(dict(id=sid,path=list(route.coords),source_sha256=record['sha256']))
+@@ -73 +83,3 @@
+-            config.update(project_title='南北候选线路工程',start_name='线路起点',end_name='线路终点',photos=[],materials=[])
++            config.update(start_name='线路起点',end_name='线路终点',photos=[],materials=[])
++            if not studio_project:
++                config['project_title']='南北候选线路工程'
+@@ -81,2 +93,5 @@
+-        write_json(folder/'job.json',dict(id=jid,status='queued',source='kml',created_at=datetime.now().astimezone().isoformat(timespec='seconds'), title=config['project_title'],
+-            routes=[dict(id=r['id'],km=LineString(r['path']).length/1000) for r in routes]))
++        job=dict(id=jid,status='queued',source='kml',created_at=datetime.now().astimezone().isoformat(timespec='seconds'),title=config['project_title'],
++                 routes=[dict(id=r['id'],km=LineString(r['path']).length/1000,sourceSha256=r['source_sha256']) for r in routes])
++        if studio_project:
++            job['studioProject']=studio_project
++        write_json(folder/'job.json',job)
+@@ -104 +119 @@
+-    return [dict(name=s['name'],km=round(s['metrics']['length_m']/1000,3),
++    return [dict(id=s.get('id'),geometryHash=s.get('geometry_hash'),name=s['name'],km=round(s['metrics']['length_m']/1000,3),
+diff --git a/road_description/workbench_document.py b/road_description/workbench_document.py
+--- a/road_description/workbench_document.py
++++ b/road_description/workbench_document.py
+@@ -56,0 +57,2 @@
++        config_path = folder/'config.json'
++        config = read_json(config_path) if config_path.is_file() else manager.base
+@@ -89 +91 @@
+-                    if render_pdf(output,manager.base.get('soffice',''))['status']!='completed':
++                    if render_pdf(output,config.get('soffice',''))['status']!='completed':
+@@ -112,0 +115,3 @@
++        llm = config.get('llm', {})
++        if not llm.get('enabled'):
++            return jsonify(error='此报告工程尚未启用 RRA 审校模型，可直接编辑并保存段落。'),503
+@@ -114 +119 @@
+-            result,_=model_call(dict(manager.base['llm'],_purpose='paragraph_revision'),[
++            result,_=model_call(dict(llm,_purpose='paragraph_revision'),[
+diff --git a/configs/studio-projects.example.json b/configs/studio-projects.example.json
+new file mode 100644
+--- /dev/null
++++ b/configs/studio-projects.example.json
+@@ -0,0 +1,9 @@
++{
++  "projects": [
++    {
++      "projectId": "YOUR-PROJECT-ID",
++      "projectVersion": "v1",
++      "config": "project-v1.json"
++    }
++  ]
++}
+diff --git a/tests/studio_fixture.py b/tests/studio_fixture.py
+new file mode 100644
+--- /dev/null
++++ b/tests/studio_fixture.py
+@@ -0,0 +1,50 @@
++"""Build a small synthetic project for the Node-to-RRA integration test."""
++from pathlib import Path
++import sys
++
++import geopandas as gpd
++import pymupdf
++from shapely.geometry import LineString, Polygon
++
++from road_description.io import archive_map, write_json
++
++
++def build(folder, soffice=None):
++    folder.mkdir(parents=True, exist_ok=True)
++    dataset = folder / 'gis'
++    (dataset / 'm1').mkdir(parents=True)
++    (dataset / 'm3').mkdir()
++    crs = 'EPSG:3857'
++    write_json(dataset / 'manifest.json', {'working_crs': crs})
++    write_json(dataset / 'm3/rule_config.json', {'compiled_rules': []})
++    features = gpd.GeoDataFrame(
++        {'_variant': ['primary'], 'std_level2': ['河流'], 'std_level1': ['水系'],
++         'attr_name': ['测试河流'], 'attr_src_uid': ['fixture-water']},
++        geometry=[LineString([(650, -150), (650, 900)])], crs=crs,
++    )
++    features.to_file(dataset / 'm1/standardized_features.gpkg')
++    bounds = [(-200, -200), (2000, -200), (2000, 1000), (-200, 1000)]
++    gpd.GeoDataFrame({'name': ['样例区']}, geometry=[Polygon(bounds)], crs=crs).to_file(folder / 'admin.gpkg')
++    archive_map(folder / 'seed', {'geo_meta': {'working_crs': crs, 'offset': [0, 0]}, 'planning_bounds': bounds,
++                                 'features': []})
++    with pymupdf.open() as pdf:
++        pdf.new_page().insert_text((36, 36), 'Synthetic report fixture')
++        pdf.save(folder / 'reference.pdf')
++    config = {
++        'project_root': str(Path(__file__).resolve().parents[1]), 'project_title': 'RRA 集成联调样例',
++        'dataset': str(dataset), 'admin_boundary': str(folder / 'admin.gpkg'),
++        'reference_pdf': str(folder / 'reference.pdf'), 'output_dir': str(folder / 'seed'),
++        'voltage_kv': 500, 'nearby_m': 200, 'page_start': 1, 'section_number': '3.3', 'use_satellite': False,
++        'route_source': 'kml', 'start': [0, 0], 'llm': {'enabled': False}, 'vlm': {'enabled': False},
++        'agents': {'assembly': {'include_candidate_books': False}}, 'quality_review': {'enabled': True, 'vision': False},
++    }
++    if soffice:
++        config['soffice'] = soffice
++    write_json(folder / 'project.json', config)
++    write_json(folder / 'registry.json', {'projects': [
++        {'projectId': 'RRA-INTEGRATION', 'projectVersion': 'v1', 'config': 'project.json'},
++    ]})
++
++
++if __name__ == '__main__':
++    build(Path(sys.argv[1]).resolve(), sys.argv[2] if len(sys.argv) > 2 else None)
